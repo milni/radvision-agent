@@ -29,6 +29,7 @@ from src.config import (
 from src.rag.reranker import rerank
 from src.rag.retriever import Retriever
 from src.rag.rewriter import rewrite_query
+from src.tracking import log_metrics_safe, set_tags_safe
 
 logger = logging.getLogger(__name__)
 
@@ -161,11 +162,26 @@ def build_rag_subgraph(vectorstore_dir: Path | None = None):
         )
         return {"raw_results": raw}
 
+    def rerank_and_log(state: dict) -> dict:
+        """Rerank results, then log RAG metrics into the active MLflow run."""
+        result = rerank(state)
+        rag_results = result.get("rag_results", [])
+        top_score = rag_results[0]["score"] if rag_results else 0.0
+        collections = state.get("collections", [])
+        log_metrics_safe({
+            "rag.top_score": round(top_score, 4),
+            "rag.num_results": len(rag_results),
+            "rag.rewrite_count": state.get("rewrite_count", 0),
+            "rag.collections_count": len(collections),
+        })
+        set_tags_safe({"rag.collections": ",".join(collections)})
+        return result
+
     graph = StateGraph(RAGState)
     graph.add_node("rewrite", rewrite_query)
     graph.add_node("select", select_indexes)
     graph.add_node("retrieve", retrieve)
-    graph.add_node("rerank", rerank)
+    graph.add_node("rerank", rerank_and_log)
     graph.add_node("increment_retry", _increment_rewrite_count)
 
     graph.add_edge(START, "rewrite")

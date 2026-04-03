@@ -22,6 +22,10 @@ htmlcov/
 # ChromaDB vector store (regeneratable via ingest script)
 data/vectorstore/
 
+# MLflow local tracking store (regeneratable)
+mlflow.db
+mlruns/
+
 # Environment variables
 .env
 .env.*

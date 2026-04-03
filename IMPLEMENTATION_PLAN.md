@@ -81,6 +81,15 @@ Build the RAG subgraph in src/rag/subgraph.py:
 ## Phase 5: Main Graph Nodes
 **Goal:** All 5 nodes implemented.
 
+MLflow (experiment: radvision/agent):
+- Each node logs its key output as metrics into the active run started
+  by run_agent() in Phase 6 (safe no-op if no run is active):
+  - triage.py     → tags: intent, route_decision; params: persona
+  - sufficiency.py→ metrics: retry_count; tags: evidence_sufficient
+  - synthesizer.py→ (no metrics needed, text output)
+  - grounding.py  → metrics: grounding_score, ungrounded_claims_count
+  - escalation.py → tags: outcome
+
 ```
 Build each node in src/agents/:
 
@@ -121,6 +130,13 @@ Build each node in src/agents/:
 ## Phase 6: Graph Assembly
 **Goal:** Complete wired LangGraph with all conditional edges.
 
+MLflow (experiment: radvision/agent):
+- run_agent(query, persona) wraps the graph.invoke() call in
+  mlflow.start_run(). All nodes (Phase 5) and the RAG subgraph log
+  into this parent run automatically via log_metrics_safe().
+- Log params: query (truncated to 200 chars), persona, llm_model
+- Log final metrics: outcome, grounding_score, total_retry_count
+
 ```
 Build src/agents/graph.py:
 - Create StateGraph with AgentState
@@ -140,6 +156,11 @@ Build src/agents/graph.py:
 ## Phase 7: Streamlit UI
 **Goal:** Working chat interface showing agent internals.
 
+MLflow:
+- Add a sidebar link to the MLflow UI (mlflow ui → localhost:5000)
+- After each query, display the MLflow run ID so the user can drill
+  into the full trace in the MLflow UI
+
 ```
 Build src/ui/app.py:
 - Chat interface with message history
@@ -155,6 +176,16 @@ Build src/ui/app.py:
 
 ## Phase 8: Evaluation & Load Test
 **Goal:** All evaluation results documented.
+
+MLflow (experiment: radvision/evaluation):
+- One MLflow run per evaluation batch
+- params: num_questions, llm_model, rag_threshold, top_k
+- metrics per question (step=question_index):
+    route_correct, tool_correct, answer_quality, outcome_correct
+- aggregate metrics: route_accuracy, answer_quality_mean, outcome_accuracy
+- artifacts: evaluation/results.json
+- Load test: log latency_p50_ms, latency_p95_ms, latency_p99_ms,
+    queries_per_second, error_rate
 
 ```
 Build scripts/run_evaluation.py:
