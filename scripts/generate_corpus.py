@@ -190,6 +190,7 @@ def generate_product_docs(spec: dict) -> list[Path]:
     return written
 
 
+
 # ---------------------------------------------------------------------------
 # Release Notes
 # One file per version; known issues listed inline for cross-referencing.
@@ -217,7 +218,6 @@ def generate_release_notes(spec: dict) -> list[Path]:
 
         highlights = "\n".join(f"- {h}" for h in version.get("highlights", []))
 
-        # Known issues section (only if this version has them)
         issues = version.get("known_issues", [])
         if issues:
             issue_lines = []

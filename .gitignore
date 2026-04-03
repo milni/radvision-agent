@@ -22,9 +22,6 @@ htmlcov/
 # ChromaDB vector store (regeneratable via ingest script)
 data/vectorstore/
 
-# Generated corpus (regeneratable from seed)
-data/corpus/
-
 # Environment variables
 .env
 .env.*
