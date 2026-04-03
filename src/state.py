@@ -39,6 +39,7 @@ class AgentState(TypedDict):
     grounding_score: float  # 0.0–1.0
     ungrounded_claims: list[str]  # Claims not supported by evidence
     grounding_pass: bool  # True if score above threshold
+    grounding_regen_count: int  # Tracks regeneration attempts, max GROUNDING_MAX_REGENERATIONS
 
     # --- Node 5: Escalation Gate ---
     outcome: str  # "resolved" | "clarify" | "escalate"
