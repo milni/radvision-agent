@@ -1,0 +1,388 @@
+# RadVision Pro — Product Specification Seed
+# All synthetic documents (KB articles, product docs, release notes, past tickets)
+# are generated from this single source of truth to ensure internal consistency.
+
+product:
+  name: "RadVision Pro"
+  vendor: "MedViz Systems"
+  category: "Advanced Medical Image Visualization Platform"
+  description: >
+    Enterprise radiology visualization platform for 2D/3D advanced visualization,
+    clinical collaboration, and multi-modality medical image review. Deployed
+    on-premise in hospital data centers, integrated with PACS/RIS via DICOM and HL7.
+
+versions:
+  - version: "4.0"
+    release_date: "2023-06-15"
+    status: "end_of_life"
+    highlights:
+      - "Initial 3D rendering engine"
+      - "Basic DICOM SCP/SCU support"
+      - "Single-site deployment only"
+  - version: "4.1"
+    release_date: "2024-01-20"
+    status: "maintenance"
+    highlights:
+      - "Multi-site federation support"
+      - "HL7 v2 ADT integration"
+      - "GPU-accelerated MPR rendering"
+    known_issues:
+      - id: "KB-3102"
+        title: "NVIDIA driver crash on multi-monitor setups"
+        affected_components: ["3D Rendering Engine"]
+        symptom: "Application crashes when extending 3D view to second monitor"
+        root_cause: "OpenGL context sharing fails with NVIDIA drivers 535.x"
+        workaround: "Use NVIDIA driver 530.x or set SINGLE_GPU_CONTEXT=true"
+        fixed_in: "4.1.2"
+      - id: "KB-3156"
+        title: "HL7 ADT messages dropped under high load"
+        affected_components: ["Integration Gateway"]
+        symptom: "Patient demographics not updating when >50 ADT messages/minute"
+        root_cause: "HL7 listener thread pool exhaustion at default pool size of 4"
+        workaround: "Set HL7_THREAD_POOL_SIZE=16 in /etc/radvision/integration.conf"
+        fixed_in: "4.1.3"
+  - version: "4.2"
+    release_date: "2024-07-10"
+    status: "current"
+    highlights:
+      - "New progressive memory allocation for 3D rendering"
+      - "FHIR R4 integration support"
+      - "Real-time clinical collaboration (screen sharing)"
+      - "Cardiac 4D visualization module"
+      - "TLS 1.3 support for DICOM associations"
+    known_issues:
+      - id: "KB-4231"
+        title: "DICOM association timeout with TLS renegotiation"
+        affected_components: ["DICOM Gateway"]
+        symptom: "DICOM SCP rejects associations intermittently, error code 0x0006"
+        root_cause: "TLS 1.3 renegotiation triggered by upstream load balancer conflicts with DICOM SCP handshake"
+        workaround: "Set SCP_TLS_RENEGOTIATION=false in /etc/radvision/dicom.conf"
+        fixed_in: "4.2.1"
+        error_pattern: "AssocReject.*reason=0x0006|TLS_RENEGO_FAIL"
+      - id: "KB-4298"
+        title: "3D Cardiac rendering artifacts on low-VRAM GPUs"
+        affected_components: ["3D Rendering Engine"]
+        symptom: "Intermittent visual artifacts in cardiac 4D reconstruction"
+        root_cause: "Progressive memory allocator falls back to CPU compositing when VRAM < 20GB, causing tearing"
+        workaround: "Set PROGRESSIVE_RENDER=true in /etc/radvision/render.conf for tiled rendering"
+        fixed_in: null
+        error_pattern: "VRAM_FALLBACK_TRIGGERED|CardiacRender.*compositor=CPU"
+      - id: "KB-4315"
+        title: "FHIR endpoint returns 503 during peak hours"
+        affected_components: ["Integration Gateway"]
+        symptom: "FHIR R4 API returns 503 Service Unavailable when concurrent requests > 20"
+        root_cause: "Default connection pool for FHIR servlet is 10, insufficient for peak loads"
+        workaround: "Set FHIR_CONNECTION_POOL=50 in /etc/radvision/integration.conf"
+        fixed_in: null
+        error_pattern: "FHIR_503|ConnectionPool.*exhausted"
+      - id: "KB-4330"
+        title: "Screen sharing latency spike on RHEL 9"
+        affected_components: ["Collaboration Hub"]
+        symptom: "Real-time screen sharing shows 2-5 second lag on RHEL 9 systems"
+        root_cause: "systemd-resolved DNS lookup adds latency to WebRTC ICE candidate gathering"
+        workaround: "Add ICE_CANDIDATE_TIMEOUT=3000 to /etc/radvision/collab.conf"
+        fixed_in: null
+        error_pattern: "ICE.*timeout|WebRTC.*candidate_gather_slow"
+  - version: "4.2.1"
+    release_date: "2024-11-05"
+    status: "current_patch"
+    highlights:
+      - "Fixed DICOM TLS renegotiation issue (KB-4231)"
+      - "Improved memory allocation for 16GB GPUs"
+      - "FHIR connection pool auto-scaling"
+
+components:
+  - name: "DICOM Gateway"
+    description: "Handles all DICOM communication (C-STORE, C-FIND, C-MOVE, C-GET)"
+    config_file: "/etc/radvision/dicom.conf"
+    protocols: ["DICOM", "TLS 1.2", "TLS 1.3"]
+    key_settings:
+      - name: "SCP_PORT"
+        default: 4242
+        description: "DICOM SCP listening port"
+      - name: "SCP_AE_TITLE"
+        default: "RADVISION"
+        description: "Application Entity title for DICOM associations"
+      - name: "SCP_TLS_RENEGOTIATION"
+        default: true
+        description: "Allow TLS renegotiation during DICOM associations"
+      - name: "MAX_ASSOCIATIONS"
+        default: 64
+        description: "Maximum concurrent DICOM associations"
+      - name: "STORE_TIMEOUT_SECONDS"
+        default: 120
+        description: "Timeout for C-STORE operations"
+
+  - name: "3D Rendering Engine"
+    description: "GPU-accelerated 2D/3D visualization: MPR, MIP, VRT, Cardiac 4D"
+    config_file: "/etc/radvision/render.conf"
+    features: ["MPR", "MIP", "VRT", "Cardiac 4D", "Vessel Analysis"]
+    key_settings:
+      - name: "GPU_DEVICE_ID"
+        default: 0
+        description: "GPU device index for rendering"
+      - name: "PROGRESSIVE_RENDER"
+        default: false
+        description: "Enable tiled progressive rendering for low-VRAM GPUs"
+      - name: "MAX_TEXTURE_SIZE_MB"
+        default: 4096
+        description: "Maximum texture allocation in MB"
+      - name: "CARDIAC_4D_FRAMERATE"
+        default: 30
+        description: "Target framerate for cardiac 4D playback"
+
+  - name: "Integration Gateway"
+    description: "HL7 v2 and FHIR R4 integration with hospital information systems"
+    config_file: "/etc/radvision/integration.conf"
+    protocols: ["HL7 v2.x", "FHIR R4", "REST API"]
+    key_settings:
+      - name: "HL7_LISTENER_PORT"
+        default: 2575
+        description: "HL7 MLLP listener port"
+      - name: "HL7_THREAD_POOL_SIZE"
+        default: 4
+        description: "Thread pool for HL7 message processing"
+      - name: "FHIR_BASE_URL"
+        default: "/fhir/r4"
+        description: "Base URL for FHIR R4 endpoint"
+      - name: "FHIR_CONNECTION_POOL"
+        default: 10
+        description: "Connection pool size for FHIR servlet"
+
+  - name: "Collaboration Hub"
+    description: "Real-time clinical collaboration with screen sharing and annotations"
+    config_file: "/etc/radvision/collab.conf"
+    features: ["Screen Sharing", "Annotations", "Report Integration", "Chat"]
+    key_settings:
+      - name: "COLLAB_PORT"
+        default: 8443
+        description: "WebSocket port for collaboration sessions"
+      - name: "ICE_CANDIDATE_TIMEOUT"
+        default: 5000
+        description: "ICE candidate gathering timeout in ms"
+      - name: "MAX_CONCURRENT_SESSIONS"
+        default: 20
+        description: "Maximum concurrent collaboration sessions"
+
+platforms:
+  operating_systems:
+    - name: "RHEL 8"
+      status: "fully_supported"
+      notes: "Primary supported platform"
+    - name: "RHEL 9"
+      status: "supported"
+      notes: "Known WebRTC latency issue, see KB-4330"
+    - name: "Ubuntu 22.04"
+      status: "supported"
+      notes: "Community supported, not recommended for production"
+    - name: "Windows Server 2022"
+      status: "supported"
+      notes: "Requires Visual C++ 2022 runtime"
+
+  gpus:
+    - name: "NVIDIA A6000"
+      vram_gb: 48
+      status: "recommended"
+      notes: "Full support for all features including Cardiac 4D at max resolution"
+    - name: "NVIDIA A5000"
+      vram_gb: 24
+      status: "fully_supported"
+      notes: "Recommended minimum for Cardiac 4D"
+    - name: "NVIDIA T4"
+      vram_gb: 16
+      status: "limited"
+      notes: "2D and basic 3D only. Cardiac 4D requires PROGRESSIVE_RENDER=true. Artifacts possible with large datasets."
+    - name: "NVIDIA A2"
+      vram_gb: 16
+      status: "limited"
+      notes: "Similar limitations to T4. Not recommended for 3D workloads."
+    - name: "AMD MI210"
+      vram_gb: 64
+      status: "experimental"
+      notes: "ROCm 5.4+ required. 3D rendering supported, Cardiac 4D not yet validated."
+
+  feature_compatibility:
+    # version → GPU → feature → status
+    - version: "4.2"
+      gpu: "NVIDIA A6000"
+      features:
+        MPR: "supported"
+        MIP: "supported"
+        VRT: "supported"
+        Cardiac_4D: "supported"
+        Vessel_Analysis: "supported"
+    - version: "4.2"
+      gpu: "NVIDIA A5000"
+      features:
+        MPR: "supported"
+        MIP: "supported"
+        VRT: "supported"
+        Cardiac_4D: "supported"
+        Vessel_Analysis: "supported"
+    - version: "4.2"
+      gpu: "NVIDIA T4"
+      features:
+        MPR: "supported"
+        MIP: "supported"
+        VRT: "limited — artifacts possible with datasets > 512 slices"
+        Cardiac_4D: "limited — requires PROGRESSIVE_RENDER=true, max 15fps"
+        Vessel_Analysis: "unsupported — insufficient VRAM"
+    - version: "4.2"
+      gpu: "AMD MI210"
+      features:
+        MPR: "supported"
+        MIP: "supported"
+        VRT: "experimental"
+        Cardiac_4D: "unsupported"
+        Vessel_Analysis: "unsupported"
+
+# Error pattern database for Log Analyzer tool
+error_patterns:
+  - pattern_id: "ERR-001"
+    regex: "AssocReject.*reason=0x0006|TLS_RENEGO_FAIL"
+    kb_ref: "KB-4231"
+    component: "DICOM Gateway"
+    severity: "high"
+    description: "TLS renegotiation failure during DICOM association"
+  - pattern_id: "ERR-002"
+    regex: "VRAM_FALLBACK_TRIGGERED|CardiacRender.*compositor=CPU"
+    kb_ref: "KB-4298"
+    component: "3D Rendering Engine"
+    severity: "medium"
+    description: "GPU VRAM exhaustion, falling back to CPU compositing"
+  - pattern_id: "ERR-003"
+    regex: "FHIR_503|ConnectionPool.*exhausted"
+    kb_ref: "KB-4315"
+    component: "Integration Gateway"
+    severity: "high"
+    description: "FHIR connection pool exhausted under load"
+  - pattern_id: "ERR-004"
+    regex: "ICE.*timeout|WebRTC.*candidate_gather_slow"
+    kb_ref: "KB-4330"
+    component: "Collaboration Hub"
+    severity: "low"
+    description: "WebRTC ICE candidate gathering timeout"
+  - pattern_id: "ERR-005"
+    regex: "OGL_CTX_SHARE_FAIL|nvidia.*multi_display_crash"
+    kb_ref: "KB-3102"
+    component: "3D Rendering Engine"
+    severity: "high"
+    description: "OpenGL context sharing failure on multi-monitor"
+  - pattern_id: "ERR-006"
+    regex: "HL7.*thread_pool_full|MLLP.*queue_overflow"
+    kb_ref: "KB-3156"
+    component: "Integration Gateway"
+    severity: "medium"
+    description: "HL7 listener thread pool exhaustion"
+  - pattern_id: "ERR-007"
+    regex: "DICOM.*timeout.*C-STORE|STORE_OP_TIMEOUT"
+    kb_ref: null
+    component: "DICOM Gateway"
+    severity: "medium"
+    description: "C-STORE operation timeout — check network and STORE_TIMEOUT_SECONDS"
+  - pattern_id: "ERR-008"
+    regex: "GPU_INIT_FAIL|CUDA.*not_found|nvidia-smi.*error"
+    kb_ref: null
+    component: "3D Rendering Engine"
+    severity: "critical"
+    description: "GPU initialization failure — verify NVIDIA driver installation and GPU_DEVICE_ID"
+  - pattern_id: "ERR-009"
+    regex: "AUTH_FAIL.*LDAP|ldap_bind.*error"
+    kb_ref: null
+    component: "Authentication"
+    severity: "high"
+    description: "LDAP authentication failure — verify AD/LDAP configuration"
+  - pattern_id: "ERR-010"
+    regex: "DISK_SPACE_LOW|storage.*threshold.*exceeded"
+    kb_ref: null
+    component: "Storage"
+    severity: "critical"
+    description: "Disk space below threshold — DICOM store will reject new images"
+
+# Synthetic past ticket templates
+ticket_templates:
+  - ticket_id: "TKT-2024-0891"
+    title: "Intermittent DICOM association failures after load balancer upgrade"
+    customer: "Memorial General Hospital"
+    persona_filed_by: "field_engineer"
+    environment:
+      version: "4.2"
+      os: "RHEL 8"
+      gpu: "NVIDIA A5000"
+    symptom: "DICOM associations failing ~30% of the time since F5 load balancer firmware upgrade"
+    diagnosis_steps:
+      - "Checked DICOM Gateway logs — saw AssocReject reason=0x0006"
+      - "Matched to KB-4231 (TLS renegotiation issue)"
+      - "Confirmed F5 firmware enables TLS 1.3 renegotiation by default"
+    resolution: "Applied SCP_TLS_RENEGOTIATION=false workaround. Scheduled upgrade to v4.2.1"
+    resolution_time_hours: 2.5
+    related_kb: ["KB-4231"]
+
+  - ticket_id: "TKT-2024-0923"
+    title: "Cardiac 4D rendering shows tearing artifacts"
+    customer: "St. Mary's Regional Medical Center"
+    persona_filed_by: "support_engineer"
+    environment:
+      version: "4.2"
+      os: "RHEL 8"
+      gpu: "NVIDIA T4"
+    symptom: "Radiologists report visual artifacts during cardiac 4D playback on large datasets"
+    diagnosis_steps:
+      - "Checked render.conf — PROGRESSIVE_RENDER=false (default)"
+      - "Checked compatibility matrix — T4 is 'limited' for Cardiac 4D"
+      - "Confirmed VRAM_FALLBACK_TRIGGERED in render logs"
+    resolution: "Enabled PROGRESSIVE_RENDER=true. Reduced framerate to 15fps. Recommended A5000 upgrade for full cardiac 4D support."
+    resolution_time_hours: 1.0
+    related_kb: ["KB-4298"]
+
+  - ticket_id: "TKT-2024-0945"
+    title: "FHIR API returning 503 during morning radiology peak"
+    customer: "University Hospital Network"
+    persona_filed_by: "support_engineer"
+    environment:
+      version: "4.2"
+      os: "Ubuntu 22.04"
+      gpu: "NVIDIA A6000"
+    symptom: "FHIR R4 endpoint returns 503 between 8-10 AM when radiologists start reading"
+    diagnosis_steps:
+      - "Checked integration.conf — FHIR_CONNECTION_POOL=10 (default)"
+      - "Monitored concurrent FHIR requests during peak — hit 35+"
+      - "Matched to KB-4315"
+    resolution: "Increased FHIR_CONNECTION_POOL to 50. Monitoring for recurrence."
+    resolution_time_hours: 0.5
+    related_kb: ["KB-4315"]
+
+  - ticket_id: "TKT-2024-0967"
+    title: "Cannot configure DICOM send to external PACS"
+    customer: "City Clinic Network"
+    persona_filed_by: "field_engineer"
+    environment:
+      version: "4.1"
+      os: "Windows Server 2022"
+      gpu: "NVIDIA A2"
+    symptom: "C-STORE to external Horos PACS fails with connection refused"
+    diagnosis_steps:
+      - "Verified network connectivity — ping and port 104 reachable"
+      - "Checked AE title configuration — mismatch between RadVision and Horos config"
+      - "Corrected SCP_AE_TITLE on Horos side"
+    resolution: "AE title mismatch. Corrected remote AE title in DICOM destination config."
+    resolution_time_hours: 1.5
+    related_kb: []
+
+  - ticket_id: "TKT-2024-0998"
+    title: "Screen sharing has multi-second lag for remote radiologist"
+    customer: "Rural Health Consortium"
+    persona_filed_by: "support_engineer"
+    environment:
+      version: "4.2"
+      os: "RHEL 9"
+      gpu: "NVIDIA A5000"
+    symptom: "Real-time collaboration screen sharing shows 3-4 second delay, making joint reads impossible"
+    diagnosis_steps:
+      - "Checked network latency — 15ms between sites (acceptable)"
+      - "Checked collab.conf — default ICE_CANDIDATE_TIMEOUT=5000"
+      - "Found ICE timeout warnings in collab logs"
+      - "Identified RHEL 9 systemd-resolved as cause (KB-4330)"
+    resolution: "Set ICE_CANDIDATE_TIMEOUT=3000. Also configured systemd-resolved to bypass local DNS for WebRTC STUN/TURN servers."
+    resolution_time_hours: 3.0
+    related_kb: ["KB-4330"]

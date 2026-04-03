@@ -1,0 +1,38 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Pull the model on first start
+    entrypoint: >
+      sh -c "ollama serve &
+             sleep 5 &&
+             ollama pull mistral:7b-instruct-v0.3-q4_K_M &&
+             wait"
+
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - LLM_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+      - EMBEDDING_MODEL=all-MiniLM-L6-v2
+      - USE_DUMMY_LLM=false
+    depends_on:
+      - ollama
+    volumes:
+      - vectorstore_data:/app/data/vectorstore
+
+volumes:
+  ollama_data:
+  vectorstore_data:

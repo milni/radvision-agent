@@ -1,0 +1,188 @@
+# Evaluation Test Set — RadVision Pro Support Agent
+# 15 questions designed to exercise every node, branch, and tool
+# Each question specifies: the expected route, which tools should fire,
+# the expected answer quality, and the persona.
+
+questions:
+  # === TRIAGE ROUTES TO LOG ANALYZER (Tool 1) ===
+
+  - id: "eval-01"
+    query: "We're seeing AssocReject reason=0x0006 in the DICOM gateway logs after upgrading our F5. Running v4.2 on RHEL 8."
+    persona: "field_engineer"
+    expected_route: "error_pattern"
+    expected_tools: ["log_analyzer"]
+    expected_kb_ref: "KB-4231"
+    expected_answer_contains:
+      - "TLS renegotiation"
+      - "SCP_TLS_RENEGOTIATION=false"
+      - "/etc/radvision/dicom.conf"
+    difficulty: "easy"
+    notes: "Direct error pattern match. Should resolve in one pass."
+
+  - id: "eval-02"
+    query: "Getting VRAM_FALLBACK_TRIGGERED in the render logs. Cardiac images look weird."
+    persona: "support_engineer"
+    expected_route: "error_pattern"
+    expected_tools: ["log_analyzer", "compat_checker"]
+    expected_kb_ref: "KB-4298"
+    expected_answer_contains:
+      - "GPU VRAM"
+      - "PROGRESSIVE_RENDER=true"
+    difficulty: "medium"
+    notes: "Log analyzer matches KB-4298, but sufficiency check should also trigger compat checker to determine GPU-specific advice."
+
+  # === TRIAGE ROUTES TO RAG ===
+
+  - id: "eval-03"
+    query: "How do I configure DICOM send to an external PACS system?"
+    persona: "field_engineer"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_answer_contains:
+      - "AE title"
+      - "SCP_PORT"
+      - "C-STORE"
+    difficulty: "easy"
+    notes: "Pure documentation retrieval. No tools needed."
+
+  - id: "eval-04"
+    query: "Customer is asking about our real-time collaboration features. What can I tell them?"
+    persona: "sales"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_answer_contains:
+      - "screen sharing"
+      - "annotations"
+      - "real-time"
+    difficulty: "easy"
+    notes: "Sales persona should get a feature-focused, non-technical answer."
+
+  - id: "eval-05"
+    query: "What changed between v4.1 and v4.2? We're planning an upgrade."
+    persona: "support_engineer"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_answer_contains:
+      - "FHIR R4"
+      - "Cardiac 4D"
+      - "TLS 1.3"
+      - "progressive memory allocation"
+    difficulty: "medium"
+    notes: "Should retrieve from release notes. Multi-chunk synthesis."
+
+  # === TRIAGE ROUTES TO COMPATIBILITY CHECKER (Tool 2) ===
+
+  - id: "eval-06"
+    query: "Does RadVision Pro 4.2 support vessel analysis on NVIDIA T4?"
+    persona: "sales"
+    expected_route: "config_check"
+    expected_tools: ["compat_checker"]
+    expected_answer_contains:
+      - "unsupported"
+      - "insufficient VRAM"
+      - "A5000"
+    difficulty: "easy"
+    notes: "Direct compat matrix lookup. Sales persona should get upgrade recommendation."
+
+  - id: "eval-07"
+    query: "Client wants to deploy on AMD MI210. What features work?"
+    persona: "sales"
+    expected_route: "config_check"
+    expected_tools: ["compat_checker"]
+    expected_answer_contains:
+      - "experimental"
+      - "ROCm"
+      - "Cardiac 4D unsupported"
+    difficulty: "easy"
+    notes: "Compat lookup with nuanced answer — some features work, some don't."
+
+  # === MULTI-STEP / SUFFICIENCY RETRY ===
+
+  - id: "eval-08"
+    query: "Customer at St. Mary's running v4.2 on RHEL 8 with T4 GPU reports intermittent 3D cardiac rendering artifacts since last Tuesday's update."
+    persona: "field_engineer"
+    expected_route: "docs_kb"
+    expected_tools: ["compat_checker"]
+    expected_answer_contains:
+      - "T4"
+      - "VRAM"
+      - "PROGRESSIVE_RENDER"
+      - "KB-4298"
+    difficulty: "hard"
+    notes: "Key test: initial RAG should find KB-4298, but sufficiency check should also trigger compat_checker to confirm T4 limitation. Tests the retry loop."
+
+  - id: "eval-09"
+    query: "FHIR API is down every morning. We're on v4.2 with Ubuntu. What's happening?"
+    persona: "support_engineer"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_kb_ref: "KB-4315"
+    expected_answer_contains:
+      - "FHIR_CONNECTION_POOL"
+      - "concurrent requests"
+      - "/etc/radvision/integration.conf"
+    difficulty: "medium"
+    notes: "Should find KB-4315 through RAG. Sufficiency check should pass on first try."
+
+  # === ESCALATION / CLARIFICATION ===
+
+  - id: "eval-10"
+    query: "Everything is broken. Nothing works since the update."
+    persona: "support_engineer"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_outcome: "clarify"
+    difficulty: "hard"
+    notes: "Vague query with no actionable entities. Escalation gate should ask for clarification: which version? which component? what symptoms?"
+
+  - id: "eval-11"
+    query: "We found a potential PHI data leak through the collaboration module's WebRTC signaling."
+    persona: "field_engineer"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_outcome: "escalate"
+    difficulty: "hard"
+    notes: "Security issue. Agent should NOT try to resolve this — should escalate with full context to human expert."
+
+  # === GROUNDING CHECKER TESTS ===
+
+  - id: "eval-12"
+    query: "Is there a known issue with DICOM on Windows Server 2022?"
+    persona: "support_engineer"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_answer_contains:
+      - "Visual C++ 2022 runtime"
+    difficulty: "medium"
+    notes: "Tests grounding: there's no specific KB for DICOM+Windows, only a platform note. Agent should report what it finds without inventing issues."
+
+  # === PERSONA DIFFERENTIATION ===
+
+  - id: "eval-13"
+    query: "T4 GPU — cardiac 4D rendering issues. What's the situation?"
+    persona: "sales"
+    expected_route: "config_check"
+    expected_tools: ["compat_checker"]
+    expected_answer_focus: "upgrade opportunity, customer-facing language"
+    difficulty: "medium"
+    notes: "Same underlying issue as eval-08, but sales persona should get upgrade-focused positioning, not technical troubleshooting steps."
+
+  - id: "eval-14"
+    query: "T4 GPU — cardiac 4D rendering issues. What's the situation?"
+    persona: "field_engineer"
+    expected_route: "config_check"
+    expected_tools: ["compat_checker"]
+    expected_answer_focus: "exact config changes, file paths, workaround commands"
+    difficulty: "medium"
+    notes: "Identical query to eval-13 but field_engineer persona. Answer should have config paths and exact settings."
+
+  # === EDGE CASE ===
+
+  - id: "eval-15"
+    query: "Can RadVision Pro do AI-based auto-segmentation of tumors?"
+    persona: "sales"
+    expected_route: "docs_kb"
+    expected_tools: []
+    expected_outcome: "resolved"
+    difficulty: "medium"
+    notes: "Feature that doesn't exist in the product. Agent should honestly say this isn't available rather than hallucinating capabilities."
