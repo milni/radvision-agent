@@ -20,7 +20,7 @@ cross-references each sentence against the evidence chunks.
 import logging
 import re
 
-from src.config import GROUNDING_THRESHOLD, GROUNDING_MAX_REGENERATIONS
+from src.config import GROUNDING_THRESHOLD
 from src.tracking import log_metrics_safe, set_tags_safe
 
 logger = logging.getLogger(__name__)
@@ -82,22 +82,16 @@ def grounding_node(state: dict) -> dict:
     if not draft.strip():
         logger.warning("Grounding: empty draft_response — failing grounding")
         return {
-            "grounding_score":        0.0,
-            "ungrounded_claims":      [],
-            "grounding_pass":         False,
-            "final_response":         "",
-            "grounding_regen_count":  regen_count,   # no attempt consumed
+            "grounding_score":       0.0,
+            "ungrounded_claims":     [],
+            "grounding_pass":        False,
+            "final_response":        "",
+            "grounding_regen_count": regen_count,  # passed through; graph node increments
         }
 
     evidence = _collect_evidence_text(tool_results, rag_results)
     score, ungrounded = _score_claims(draft, evidence)
     grounding_pass = score >= GROUNDING_THRESHOLD
-
-    # Consume one regen slot only when grounding fails and retries remain.
-    # The graph uses grounding_regen_count >= GROUNDING_MAX_REGENERATIONS to
-    # break the synthesizer → grounding loop and force escalation instead.
-    if not grounding_pass and regen_count < GROUNDING_MAX_REGENERATIONS:
-        regen_count += 1
 
     logger.info(
         "Grounding: score=%.3f pass=%s ungrounded=%d regen_count=%d",
@@ -111,9 +105,9 @@ def grounding_node(state: dict) -> dict:
     set_tags_safe({"grounding_pass": str(grounding_pass)})
 
     return {
-        "grounding_score":        score,
-        "ungrounded_claims":      ungrounded,
-        "grounding_pass":         grounding_pass,
-        "grounding_regen_count":  regen_count,
-        "final_response":         draft,   # promoted to final; may be replaced on regen
+        "grounding_score":       score,
+        "ungrounded_claims":     ungrounded,
+        "grounding_pass":        grounding_pass,
+        "grounding_regen_count": regen_count,  # passed through; graph node increments on fail
+        "final_response":        draft,         # promoted to final; may be replaced on regen
     }

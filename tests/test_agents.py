@@ -351,8 +351,9 @@ class TestGroundingNode:
         assert out["grounding_pass"] is False
         assert out["grounding_score"] == 0.0
 
-    def test_regen_count_incremented_on_grounding_fail(self):
-        # Counter must advance so the synthesizer → grounding loop cannot run forever
+    def test_regen_count_passed_through_unchanged(self):
+        # grounding_node does NOT increment the counter — the graph's
+        # increment_regen node owns that, so the edge condition works correctly.
         out = grounding_node({
             "draft_response": "KB-9999 is the fix.",
             "rag_results": [_rag_result(text="KB-4231 is relevant.")],
@@ -360,9 +361,9 @@ class TestGroundingNode:
             "grounding_regen_count": 0,
         })
         assert out["grounding_pass"] is False
-        assert out["grounding_regen_count"] == 1
+        assert out["grounding_regen_count"] == 0  # unchanged; graph node increments
 
-    def test_regen_count_not_incremented_after_max_regenerations(self):
+    def test_regen_count_at_max_still_passed_through(self):
         from src.config import GROUNDING_MAX_REGENERATIONS
         out = grounding_node({
             "draft_response": "KB-9999 is the fix.",
