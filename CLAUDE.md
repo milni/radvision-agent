@@ -26,8 +26,11 @@ troubleshooting, configuration, and product questions about a radiology 2D/3D vi
 
 ### RAG Subgraph (separate, does not count toward 5 nodes):
 - Query Rewriter → Index Selector (conditional: which collections) → Multi-Index Retrieve → Cross-Index Reranker → Relevance Gate (conditional: pass or retry rewrite, max 1)
-- Four vector store collections: KB articles, Product docs, Release notes, Past tickets
-- Each collection uses different chunking strategy
+- Four vector store collections, each with a different chunking strategy:
+  - **KB articles** (Knowledge Base): official, curated troubleshooting documents written after a problem is fully understood. Each article covers one known issue with Symptom / Root Cause / Workaround / Resolution. Chunked by section.
+  - **Product docs**: component reference documentation with configuration settings. Chunked by paragraph with heading context prepended.
+  - **Release notes**: per-version changelogs listing new features and known issues. Chunked by version entry.
+  - **Past tickets**: raw support case records from real customer incidents. Capture engineer diagnosis steps, environment details, and field experience that may not appear in KB articles. Complement KB articles by adding real-world context. Chunked by resolution section.
 
 ### Tools (2, non-retrieval):
 1. **Log Pattern Analyzer** — Regex/rule-based matching of error messages against known error signatures.
