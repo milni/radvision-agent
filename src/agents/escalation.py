@@ -1,21 +1,23 @@
 """Escalation Gate node (Node 5) for the RadVision Pro support agent.
 
-Three-way decision based on grounding quality and evidence completeness:
+Three-way decision via LLM (gemma3:1b):
+  resolved  — the draft answers the query with sufficient grounded evidence
+  clarify   — query is too vague (missing version/OS/component)
+  escalate  — safety/compliance issue, critical error, or no useful evidence
 
-  resolved  — grounding passed AND evidence was sufficient
-  clarify   — evidence insufficient AND the query lacked key context
-              (no version, no OS, no component identified by triage)
-  escalate  — safety/compliance keywords detected, OR grounding score
-              critically low (< 0.3), OR all other conditions fail
+Safety regex and critically-low grounding score bypass the LLM — those
+are hard rules that cannot be overridden.
 
-Packages an escalation_package dict when outcome == "escalate" so a
-human expert has everything needed to continue the case.
+Packages an escalation_package dict when outcome == "escalate".
 """
 
+import json
 import logging
 import re
 
-from src.config import GROUNDING_THRESHOLD
+from langchain_ollama import ChatOllama
+
+from src.config import ESCALATION_LLM_MODEL, OLLAMA_BASE_URL
 from src.tracking import set_tags_safe
 
 logger = logging.getLogger(__name__)
@@ -26,19 +28,45 @@ _SAFETY_RE = re.compile(
     re.IGNORECASE,
 )
 
-_ESCALATION_THRESHOLD = 0.3   # below this → always escalate
+_ESCALATION_THRESHOLD = 0.3
+
+_ESCALATION_PROMPT = """\
+You are the escalation gate of a radiology software support agent.
+Decide the outcome for this support interaction.
+
+Query: {query}
+Entities extracted: {entities}
+Evidence sufficient: {evidence_sufficient}
+Grounding score: {grounding_score}
+Draft response: {draft}
+
+Choose exactly one outcome:
+- "resolved"  — the draft answers the query with sufficient grounded evidence
+- "clarify"   — the query is too vague to answer (missing version/OS/component info)
+- "escalate"  — safety/compliance issue, critical error with no KB article, or no useful evidence found
+
+Return a JSON object: {{"outcome": "<resolved|clarify|escalate>", "reason": "<one sentence>"}}
+Return only the JSON object."""
+
+_llm = None
+
+
+def _get_llm() -> ChatOllama:
+    global _llm
+    if _llm is None:
+        _llm = ChatOllama(model=ESCALATION_LLM_MODEL, base_url=OLLAMA_BASE_URL, temperature=0, format="json")
+    return _llm
 
 
 def escalation_node(state: dict) -> dict:
     """Decide the final outcome and build the response or escalation package."""
-    query:              str   = state.get("query", "")
-    grounding_score:    float = state.get("grounding_score", 0.0)
-    grounding_pass:     bool  = state.get("grounding_pass", False)
-    evidence_sufficient: bool = state.get("evidence_sufficient", False)
-    entities:           dict  = state.get("entities", {})
-    draft:              str   = state.get("draft_response", "")
+    query:               str   = state.get("query", "")
+    grounding_score:     float = state.get("grounding_score", 0.0)
+    evidence_sufficient: bool  = state.get("evidence_sufficient", False)
+    entities:            dict  = state.get("entities", {})
+    draft:               str   = state.get("draft_response", "")
 
-    # --- Outcome logic ---
+    # Hard rules — no LLM override
     if _SAFETY_RE.search(query):
         outcome = "escalate"
         reason  = "safety or compliance keywords detected in query"
@@ -47,37 +75,27 @@ def escalation_node(state: dict) -> dict:
         outcome = "escalate"
         reason  = f"grounding score critically low ({grounding_score:.2f} < {_ESCALATION_THRESHOLD})"
 
-    elif grounding_pass and evidence_sufficient:
-        outcome = "resolved"
-        reason  = "sufficient grounded evidence"
-
-    elif not evidence_sufficient and not entities:
-        outcome = "clarify"
-        reason  = "query lacks context (no version, OS, GPU, or component identified)"
-
-    elif not evidence_sufficient:
-        # Entities were extracted but nothing relevant was found after all retries.
-        # Don't pretend we have an answer — escalate to a specialist.
-        outcome = "escalate"
-        reason  = "no relevant evidence found in knowledge base after retries"
-
     else:
-        # Evidence found but grounding is partial — best-effort resolve is acceptable.
-        outcome = "resolved"
-        reason  = "partial evidence; best-effort response"
+        response = _get_llm().invoke(_ESCALATION_PROMPT.format(
+            query=query[:300],
+            entities=entities,
+            evidence_sufficient=evidence_sufficient,
+            grounding_score=round(grounding_score, 2),
+            draft=draft[:400],
+        ))
+        data = json.loads(response.content)
+        outcome = data.get("outcome", "resolved")
+        if outcome not in ("resolved", "clarify", "escalate"):
+            outcome = "resolved"
+        reason = data.get("reason", "")
 
     logger.info("Escalation: outcome=%s — %s", outcome, reason)
     set_tags_safe({"outcome": outcome})
 
-    # --- Build output ---
     if outcome == "resolved":
-        final = draft if draft.strip() else (
-            "The agent processed your query but could not produce a response. "
-            "Please contact support directly."
-        )
         return {
             "outcome":            outcome,
-            "final_response":     final,
+            "final_response":     draft or "The agent processed your query but could not produce a response. Please contact support directly.",
             "escalation_package": None,
         }
 
@@ -89,31 +107,28 @@ def escalation_node(state: dict) -> dict:
             + "For example: which version of RadVision Pro, OS, and GPU are you using?"
         )
         return {
-            "outcome":               outcome,
+            "outcome":                outcome,
             "clarification_question": question,
-            "final_response":        question,
-            "escalation_package":    None,
+            "final_response":         question,
+            "escalation_package":     None,
         }
 
     # escalate
     package = {
-        "query":           query,
-        "entities":        entities,
-        "tool_results":    state.get("tool_results", []),
-        "rag_results":     [
+        "query":             query,
+        "entities":          entities,
+        "tool_results":      state.get("tool_results", []),
+        "rag_results":       [
             {"score": r["score"], "source": r["source_collection"],
              "kb_id": r["metadata"].get("kb_id", ""), "text": r["text"][:300]}
             for r in state.get("rag_results", [])
         ],
-        "grounding_score": grounding_score,
-        "draft_response":  draft,
+        "grounding_score":   grounding_score,
+        "draft_response":    draft,
         "escalation_reason": reason,
     }
     return {
         "outcome":            outcome,
-        "final_response":     (
-            "This case has been escalated to a specialist. "
-            f"Reason: {reason}. You will be contacted shortly."
-        ),
+        "final_response":     f"This case has been escalated to a specialist. Reason: {reason}. You will be contacted shortly.",
         "escalation_package": package,
     }

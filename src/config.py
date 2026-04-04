@@ -16,8 +16,9 @@ VECTORSTORE_DIR = DATA_DIR / "vectorstore"
 
 # --- LLM ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "mistral:7b-instruct-v0.3-q4_K_M")
-USE_DUMMY_LLM = os.getenv("USE_DUMMY_LLM", "true").lower() == "true"
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma3:4b")
+GROUNDING_LLM_MODEL = os.getenv("GROUNDING_LLM_MODEL", "gemma3:1b")
+ESCALATION_LLM_MODEL = os.getenv("ESCALATION_LLM_MODEL", "gemma3:1b")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # --- Embeddings ---
