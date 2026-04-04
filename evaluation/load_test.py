@@ -31,15 +31,15 @@ from src.tracking import EXPERIMENT_EVALUATION, log_metrics_safe, log_params_saf
 
 _QUERY_POOL = [
     ("DICOM association rejected with TLS renegotiation error on v4.2", "support"),
-    ("cardiac 4D rendering visual artifacts after upgrading to v4.2.1", "field_engineer"),
+    ("cardiac 4D rendering visual artifacts after upgrading to v4.2.1", "support"),
     ("FHIR endpoint returns 503 during peak load on v4.2", "support"),
     ("what new features were introduced in version 4.2", "sales"),
     ("Is NVIDIA T4 supported for vessel analysis in v4.2", "sales"),
-    ("how to configure SCP_TLS_RENEGOTIATION in the DICOM gateway", "field_engineer"),
+    ("how to configure SCP_TLS_RENEGOTIATION in the DICOM gateway", "support"),
     ("VRAM_FALLBACK_TRIGGERED in render logs, cardiac images look wrong", "support"),
-    ("screen sharing lag in collaboration hub on RHEL 9", "field_engineer"),
+    ("screen sharing lag in collaboration hub on RHEL 9", "support"),
     ("can RadVision Pro integrate with our Epic EHR system", "sales"),
-    ("AssocReject reason=0x0006 in DICOM gateway logs after F5 upgrade", "field_engineer"),
+    ("AssocReject reason=0x0006 in DICOM gateway logs after F5 upgrade", "support"),
 ]
 
 

@@ -75,13 +75,16 @@ logger = logging.getLogger(__name__)
 _log_analyzer = LogAnalyzer()
 _compat_checker = CompatibilityChecker()
 
-# Triage component names → feature keys in the compat matrix
+# Triage component names → specific feature to check when the component is known
 _COMPONENT_TO_FEATURE = {
-    "Rendering Engine":   "Cardiac 4D",
+    "Rendering Engine":    "Cardiac 4D",
     "Integration Gateway": "FHIR R4",
-    "CollabHub":          "WebRTC",
-    "DICOM Gateway":      "DICOM TLS",
+    "CollabHub":           "WebRTC",
+    "DICOM Gateway":       "DICOM TLS",
 }
+
+# All features in the compat matrix — used when no specific feature is mentioned
+_ALL_FEATURES = ["MPR", "MIP", "VRT", "Cardiac 4D", "Vessel Analysis"]
 
 
 def _run_log_analyzer(state: dict) -> dict:
@@ -94,28 +97,50 @@ def _run_log_analyzer(state: dict) -> dict:
 def _run_compat_checker(state: dict) -> dict:
     """Run the compatibility checker using entities extracted by triage.
 
-    Calls check_compatibility when version + GPU are known, and/or
-    check_platform when version + OS are known.
+    When a specific component is known, checks that one feature.
+    When only a GPU is known (e.g. "which features work on AMD MI210?"),
+    checks every feature in the matrix so the synthesizer gets a full picture.
+    Falls back to _DEFAULT_VERSION when no version was extracted.
     """
-    entities = state.get("entities", {})
-    version   = entities.get("version", "")
+    entities  = state.get("entities", {})
+    version   = entities.get("version") or ""
     gpu       = entities.get("gpu", "")
     os_name   = entities.get("os", "")
-    component = entities.get("component", "")
 
     results: list[dict] = []
-    if version and gpu:
-        feature = _COMPONENT_TO_FEATURE.get(component, "Cardiac 4D")
-        results.append(_compat_checker.check_compatibility(version, gpu, feature).model_dump())
-    if version and os_name:
+
+    if gpu:
+        # Determine which versions to check.
+        # If the user stated a version, use only that.
+        # If no version was mentioned, check every version in the matrix for this GPU —
+        # never assume or invent a version.
+        if version:
+            versions_to_check = [version]
+        else:
+            versions_to_check = _compat_checker.versions_for_gpu(gpu)
+
+        if versions_to_check:
+            for v in versions_to_check:
+                for feature in _ALL_FEATURES:
+                    r = _compat_checker.check_compatibility(v, gpu, feature).model_dump()
+                    r["checked_feature"] = feature
+                    r["checked_version"] = v
+                    results.append(r)
+        else:
+            results = [{"status": "unknown",
+                        "reason": f"No compatibility data found for GPU '{gpu}'.",
+                        "recommendation": "Verify the GPU model name and consult release notes."}]
+
+    if os_name:
         results.append(_compat_checker.check_platform(version, os_name).model_dump())
+
     if not results:
         results = [{"status": "unknown",
-                    "reason": "Insufficient entities for compatibility check.",
-                    "recommendation": ""}]
+                    "reason": "No GPU or OS found in query — cannot run compatibility check.",
+                    "recommendation": "Provide the GPU model or OS name to get a compatibility result."}]
 
     logger.info("CompatChecker: %d results, statuses=%s",
-                len(results), [r["status"] for r in results])
+                len(results), [r.get("status") for r in results])
     return {"tool_results": results, "rag_results": []}
 
 
@@ -203,7 +228,10 @@ def build_graph(vectorstore_dir: Path | None = None):
             "top_k":         RAG_TOP_K,
             "rewrite_count": 0,
         })
-        return {"rag_results": out.get("rag_results", []), "tool_results": []}
+        # Preserve existing tool_results (e.g. compat checker output from a prior node).
+        # Only reset them when RAG is the first tool called (no prior tool results).
+        existing_tool_results = state.get("tool_results", [])
+        return {"rag_results": out.get("rag_results", []), "tool_results": existing_tool_results}
 
     graph = StateGraph(AgentState)
 
@@ -268,7 +296,7 @@ def run_agent(query: str, persona: str = "support") -> dict:
 
     Args:
         query:   User query string.
-        persona: "support" | "field_engineer" | "sales"
+        persona: "support" | "sales"
 
     Returns:
         Final AgentState dict with outcome, final_response, and all

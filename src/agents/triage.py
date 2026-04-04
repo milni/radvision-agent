@@ -36,9 +36,18 @@ Given a support query, return a JSON object with these exact keys:
 }}
 
 Route rules:
-- error_pattern: query contains a specific error code, log token, or known error signature
-- config_check:  query asks whether a GPU/OS/version is supported or compatible
-- docs_kb:       everything else (how-to, feature questions, release notes)
+- error_pattern: query contains a SPECIFIC error code, log token, or exact log signature copied
+  from a log file. Generic symptoms or HTTP status codes alone do NOT qualify.
+  Examples: "AssocReject 0x0006", "VRAM_FALLBACK_TRIGGERED", "HL7 thread_pool_full"
+  NOT error_pattern: "FHIR returns 503", "images look weird", "something crashed"
+- config_check:  query asks about GPU, OS, or version support/compatibility, OR asks which
+  features work/are available on a specific GPU or platform. Applies even when phrased as
+  a sales question ("what should I tell them", "can we deploy", "will it work for a client").
+  Examples: "Does T4 support Cardiac 4D?", "What features work on AMD MI210?",
+  "Is RHEL 9 supported?", "Can we deploy on this GPU?", "Which features will work?",
+  "A prospect has T4 GPUs and wants Cardiac 4D", "What should I tell them about GPU support?"
+- docs_kb:       everything else — how-to, configuration steps, troubleshooting without a
+  specific log token, release notes, product overview, feature descriptions
 
 Query: {query}
 
@@ -67,7 +76,6 @@ def triage_node(state: dict) -> dict:
     route_decision = data.get("route_decision", "docs_kb")
     if route_decision not in ("error_pattern", "config_check", "docs_kb"):
         route_decision = "docs_kb"
-
     logger.info("Triage: intent=%s route=%s entities=%s", intent, route_decision, entities)
     log_params_safe({"persona": persona})
     set_tags_safe({"intent": intent, "route_decision": route_decision})

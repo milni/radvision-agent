@@ -16,7 +16,7 @@ class AgentState(TypedDict):
 
     # --- Input ---
     query: str
-    persona: str  # "sales" | "support" | "field_engineer"
+    persona: str  # "sales" | "support"
 
     # --- Node 1: Triage + Route ---
     entities: dict  # version, os, gpu, error_code, component, site, etc.

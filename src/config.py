@@ -17,15 +17,15 @@ VECTORSTORE_DIR = DATA_DIR / "vectorstore"
 # --- LLM ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemma3:4b")
-GROUNDING_LLM_MODEL = os.getenv("GROUNDING_LLM_MODEL", "gemma3:1b")
-ESCALATION_LLM_MODEL = os.getenv("ESCALATION_LLM_MODEL", "gemma3:1b")
+GROUNDING_LLM_MODEL = os.getenv("GROUNDING_LLM_MODEL", "gemma3:4b")
+ESCALATION_LLM_MODEL = os.getenv("ESCALATION_LLM_MODEL", "gemma3:4b")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 
 # --- Embeddings ---
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 # --- RAG ---
-CHROMA_COLLECTION_NAMES = ["kb_articles", "product_docs", "release_notes", "past_tickets"]
+CHROMA_COLLECTION_NAMES = ["kb_articles", "product_docs", "release_notes"]
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 RAG_RELEVANCE_THRESHOLD = float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.3"))
 RAG_MAX_RETRIES = int(os.getenv("RAG_MAX_RETRIES", "1"))

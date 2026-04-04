@@ -34,7 +34,6 @@ RESULTS_PATH = EVAL_DIR / "results.json"
 # Map YAML persona names → graph persona names
 _PERSONA_MAP = {
     "support_engineer": "support",
-    "field_engineer":   "field_engineer",
     "sales":            "sales",
     "support":          "support",
 }
@@ -107,6 +106,8 @@ def _run_question(graph, q: dict) -> dict:
         "grounding_pass":    state.get("grounding_pass", False),
         "node_trace":        " → ".join(node_trace),
         "latency_s":         latency,
+        "expected_answer":   q.get("expected_answer", ""),
+        "actual_answer":     state.get("final_response", ""),
     }
 
 

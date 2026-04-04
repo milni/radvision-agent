@@ -4,7 +4,7 @@
 Agentic RAG chatbot prototype for a fictional medical imaging visualization platform ("RadVision Pro").
 Built as a take-home assignment for a Medior AI Engineer role.
 
-The agent supports three personas (Sales Engineers, Support Engineers, Field Engineers) in
+The agent supports two personas (Sales Engineers, Support Engineers) in
 troubleshooting, configuration, and product questions about a radiology 2D/3D visualization platform.
 
 ## Architecture (LangGraph)
@@ -18,7 +18,7 @@ troubleshooting, configuration, and product questions about a radiology 2D/3D vi
 2. **Sufficiency Check** — Evaluates gathered evidence. Enough to answer? If not, loops back to
    Triage + Route with refined query (max 1 retry). Conditional: sufficient → continue, insufficient → retry.
 3. **Response Synthesizer** — Formats the answer based on persona. Same evidence, different output
-   for sales vs support vs field engineer.
+   for sales vs support.
 4. **Grounding Checker** — Verifies every factual claim in the drafted response against the actual
    retrieved chunks. If ungrounded claims found → send back to synthesizer for regeneration.
 5. **Escalation Gate** — Three-way conditional: resolve (output answer), clarify (ask user for more info),
@@ -26,11 +26,10 @@ troubleshooting, configuration, and product questions about a radiology 2D/3D vi
 
 ### RAG Subgraph (separate, does not count toward 5 nodes):
 - Query Rewriter → Index Selector (conditional: which collections) → Multi-Index Retrieve → Cross-Index Reranker → Relevance Gate (conditional: pass or retry rewrite, max 1)
-- Four vector store collections, each with a different chunking strategy:
-  - **KB articles** (Knowledge Base): official, curated troubleshooting documents written after a problem is fully understood. Each article covers one known issue with Symptom / Root Cause / Workaround / Resolution. **Chunked as whole document** — articles are short (~300-600 chars) and cohesive; splitting produces fragments too short to embed meaningfully.
-  - **Product docs**: component reference documentation with configuration settings. **Chunked by paragraph** with heading hierarchy prepended as context prefix (`Component > Section > Subsection`).
-  - **Release notes**: per-version changelogs listing new features and known issues. **Chunked by `##` section** (What's New / Known Issues), carrying version metadata.
-  - **Past tickets**: raw support case records from real customer incidents. Capture engineer diagnosis steps, environment details, and field experience that may not appear in KB articles. Complement KB articles by adding real-world context. **Chunked as whole document** — tickets are short (~600-800 chars) and narrative; splitting breaks the symptom→diagnosis→resolution context.
+- Three vector store collections, each with a different chunking strategy:
+  - **KB articles** (Knowledge Base): official, curated troubleshooting documents written after a problem is fully understood. Each article covers one known issue with Symptom / Root Cause / Workaround / Resolution. **Chunked by H2 section** — one chunk per section (Symptom, Root Cause, Workaround, Resolution, etc.). Each chunk includes the article title and metadata (Article ID, Affected Version, Component, Fixed In) repeated as a preamble, followed by the H2 section name and content. Estimated size: ~30 tokens (preamble) + ~150–280 tokens (content) — within the 512-token limit.
+  - **Product docs**: component reference documentation with configuration settings. **Chunked by H3 subsection** — one chunk per parameter or scenario. Each chunk includes the component name, the full Overview section (for context), the H2 section name, the H3 subsection name, and the H3 content. The Overview repeats in every chunk so each is self-contained. Estimated size: ~250–350 tokens, within the 512-token embedding limit.
+  - **Release notes**: per-version changelogs listing new features and known issues. **Chunked by H3 subsection** — one chunk per feature or known issue entry. Each chunk includes the document title, Release Date/Status metadata, the H2 section name, and the H3 subsection content. Mirrors the product_docs chunk structure.
 
 ### Tools (2, non-retrieval):
 1. **Log Pattern Analyzer** — Regex/rule-based matching of error messages against known error signatures.
@@ -45,7 +44,7 @@ troubleshooting, configuration, and product questions about a radiology 2D/3D vi
 - LangGraph (langgraph) for workflow orchestration
 - LangChain for LLM integration and document processing
 - ChromaDB for vector storage
-- Ollama with Mistral 7B (or configurable; dummy LLM fallback supported)
+- Ollama (gemma3:4b for triage/synthesis, gemma3:1b for grounding/escalation — all configurable via env vars)
 - Sentence-transformers (all-MiniLM-L6-v2) for embeddings
 - Streamlit for UI
 - Docker + docker-compose for containerization
@@ -65,8 +64,7 @@ radvision-agent/
 │   ├── corpus/            # Generated documents (from seed)
 │   │   ├── kb_articles/
 │   │   ├── product_docs/
-│   │   ├── release_notes/
-│   │   └── past_tickets/
+│   │   └── release_notes/
 │   └── vectorstore/       # ChromaDB persistent storage
 ├── src/
 │   ├── __init__.py
@@ -120,7 +118,7 @@ The shared state flows through all nodes. Key fields:
 ```python
 class AgentState(TypedDict):
     query: str                          # Original user query
-    persona: str                        # "sales" | "support" | "field_engineer"
+    persona: str                        # "sales" | "support"
     entities: dict                      # Extracted: version, os, gpu, error_code, etc.
     intent: str                         # "troubleshooting" | "feature_inquiry" | "config_help"
     route_decision: str                 # "error_pattern" | "docs_kb" | "config_check"
@@ -149,8 +147,6 @@ class AgentState(TypedDict):
 10. README documentation
 
 ## Important Constraints
-- NO paid APIs. Use Ollama with open-source models, or dummy LLM for testing.
-- Dummy LLM should return plausible structured outputs so the graph can be tested end-to-end
-  without a running Ollama instance.
+- NO paid APIs. Use Ollama with open-source models only.
 - All documents generated from data/seed/product_spec.yaml for internal consistency.
 - Streamlit UI should show: chat interface, which nodes executed, retrieved sources, grounding score.

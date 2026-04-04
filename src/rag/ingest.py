@@ -5,12 +5,16 @@ collection-specific strategy, embeds each chunk with sentence-transformers,
 and stores everything in ChromaDB.
 
 Chunking strategies per collection:
-- kb_articles:   one chunk per article (whole document); articles are short and cohesive —
-                 splitting by section produces fragments too short to embed meaningfully
-- product_docs:  split by paragraph; prepend heading hierarchy as context prefix
-- release_notes: split by ## section heading (What's New / Known Issues)
-- past_tickets:  one chunk per ticket (whole document); tickets are short and cohesive —
-                 splitting by section produces fragments too short to embed meaningfully
+- kb_articles:   one chunk per H2 section (Symptom / Root Cause / Workaround / Resolution).
+                 Each chunk repeats the article header (H1 title + metadata) as a preamble.
+- product_docs:  one chunk per H3 subsection (one parameter or scenario per chunk).
+                 Each chunk repeats the component name + full Overview section as a preamble.
+- release_notes: one chunk per H3 subsection (one feature or known-issue entry per chunk).
+                 Each chunk repeats the document title + Release Date / Status as a preamble.
+
+All three strategies embed the repeating preamble so every chunk is self-contained and
+retrievable without needing the surrounding document. Estimated chunk sizes are well within
+the 512-token limit of the all-MiniLM-L6-v2 embedding model.
 """
 
 import logging
@@ -46,7 +50,7 @@ class CorpusIngestor:
     # ------------------------------------------------------------------
 
     def ingest_all(self, corpus_dir: Path = CORPUS_DIR) -> dict[str, int]:
-        """Ingest all four collections and return chunk counts per collection.
+        """Ingest all three collections and return chunk counts per collection.
 
         Args:
             corpus_dir: Root of the generated corpus (data/corpus/).
@@ -63,9 +67,6 @@ class CorpusIngestor:
             ),
             "release_notes": self._ingest_collection(
                 corpus_dir / "release_notes", "release_notes", self._chunk_release_notes
-            ),
-            "past_tickets": self._ingest_collection(
-                corpus_dir / "past_tickets", "past_tickets", self._chunk_past_ticket
             ),
         }
 
@@ -109,43 +110,54 @@ class CorpusIngestor:
     # ------------------------------------------------------------------
 
     def _chunk_kb_article(self, path: Path) -> list[dict]:
-        """Store each KB article as a single chunk.
+        """One chunk per H2 section; each chunk repeats the article header.
 
-        KB articles are short by design (4 sections of 1-2 sentences each, ~300-600 chars
-        total) and cover exactly one issue. Splitting by section produces fragments that are
-        too short to embed meaningfully and loses the connection between symptom, root cause,
-        and workaround. The whole article fits comfortably within the 512-token model limit.
+        Chunk structure:
+
+            {H1 title + metadata block (Article ID, Affected Version, etc.)}
+
+            ## {H2 section name}
+
+            {H2 content — all blocks until the next H2}
+
+        Sections: Symptom / Root Cause / Affected Environments / Workaround /
+        Resolution / Related Articles.  The preamble repeats in every chunk so
+        each is self-contained and retrievable independently.  Estimated size:
+        ~30 tokens (preamble) + ~150-280 tokens (content) = well within 512.
         """
         text = path.read_text(encoding="utf-8")
         kb_id = path.stem
         version = _extract(text, r"\*\*Affected Version:\*\* (.+)")
         component = _extract(text, r"\*\*Affected Components:\*\* (.+)")
 
-        return [{
-            "id": kb_id,
-            "text": text.strip(),
-            "metadata": {
-                "source_type": "kb_article",
-                "kb_id": kb_id,
-                "version": version,
-                "component": component,
-                "source_file": path.name,
-            },
-        }]
+        # Preamble = H1 title + all metadata fields before the first ## heading
+        preamble = re.split(r"\n## ", text)[0].strip()
 
-    def _chunk_product_doc(self, path: Path) -> list[dict]:
-        """Split a product doc by paragraph, prepending the heading context.
-
-        Each paragraph chunk is prefixed with "Component > Section > Subsection"
-        so the retrieved chunk always carries its location in the doc hierarchy.
-        """
-        text = path.read_text(encoding="utf-8")
-        component = _first_heading(text)
-
-        chunks = []
-        current_h2 = ""
-        current_h3 = ""
+        chunks: list[dict] = []
         chunk_index = 0
+        current_h2 = ""
+        h2_blocks: list[str] = []
+
+        def _emit(h2: str, blocks: list[str]) -> None:
+            nonlocal chunk_index
+            if not blocks or not h2:
+                return
+            content = "\n\n".join(blocks)
+            chunk_text = f"{preamble}\n\n## {h2}\n\n{content}"
+            chunks.append({
+                "id": f"{kb_id}_c{chunk_index}",
+                "text": chunk_text,
+                "metadata": {
+                    "source_type": "kb_article",
+                    "kb_id": kb_id,
+                    "section": h2,
+                    "version": version,
+                    "component": component,
+                    "source_file": path.name,
+                    "chunk_index": chunk_index,
+                },
+            })
+            chunk_index += 1
 
         for block in re.split(r"\n\n+", text):
             block = block.strip()
@@ -154,84 +166,186 @@ class CorpusIngestor:
             if block.startswith("# "):
                 continue
             if block.startswith("## "):
+                _emit(current_h2, h2_blocks)
+                h2_blocks = []
                 current_h2 = block.lstrip("# ").strip()
-                current_h3 = ""
                 continue
-            if block.startswith("### "):
-                current_h3 = block.lstrip("# ").strip()
-                continue
+            if not current_h2:
+                continue   # preamble metadata — already captured
+            h2_blocks.append(block)
 
-            parts = [component]
-            if current_h2:
-                parts.append(current_h2)
-            if current_h3:
-                parts.append(current_h3)
-            prefix = " > ".join(parts)
+        _emit(current_h2, h2_blocks)
+        return chunks
 
+    def _chunk_product_doc(self, path: Path) -> list[dict]:
+        """One chunk per H3 subsection, each prefixed with component name and Overview.
+
+        Chunk structure (plain text, no markdown heading markers):
+
+            {component}
+
+            Overview
+            {overview text}
+
+            {H2 section name}
+            {H3 subsection name}
+            {H3 content — all blocks until the next H3 or H2}
+
+        H2 sections without H3 children (e.g. a GPU requirements table) emit one chunk
+        with the H2 content in place of the H3 block.
+
+        The Overview is repeated in every chunk so each chunk is self-contained.
+        Estimated token budget: ~80 (overview) + ~200 (content) = ~280 — well within the
+        512-token limit of the all-MiniLM-L6-v2 embedding model.
+        """
+        text = path.read_text(encoding="utf-8")
+        component = _first_heading(text)
+        overview_text = _extract_section(text, "Overview")
+
+        chunks: list[dict] = []
+        chunk_index = 0
+        current_h2 = ""
+        current_h3 = ""
+        h3_blocks: list[str] = []        # content blocks under the current H3
+        h2_blocks: list[str] = []        # content blocks under H2 before any H3
+
+        def _emit(h2: str, h3: str, blocks: list[str]) -> None:
+            nonlocal chunk_index
+            if not blocks or not h2:
+                return
+            content = "\n\n".join(blocks)
+            heading_line = f"{h2}\n{h3}" if h3 else h2
+            chunk_text = (
+                f"{component}\n\nOverview\n{overview_text}\n\n{heading_line}\n{content}"
+            )
             chunks.append({
                 "id": f"{path.stem}_c{chunk_index}",
-                "text": f"{prefix}\n\n{block}",
+                "text": chunk_text,
                 "metadata": {
                     "source_type": "product_doc",
                     "component": component,
-                    "section": current_h2,
-                    "subsection": current_h3,
+                    "section": h2,
+                    "subsection": h3,
                     "source_file": path.name,
                     "chunk_index": chunk_index,
                 },
             })
             chunk_index += 1
 
+        for block in re.split(r"\n\n+", text):
+            block = block.strip()
+            if not block:
+                continue
+            if block.startswith("# "):
+                continue
+            if block.startswith("## "):
+                _emit(current_h2, current_h3, h3_blocks)
+                h3_blocks = []
+                _emit(current_h2, "", h2_blocks)
+                h2_blocks = []
+                current_h2 = block.lstrip("# ").strip()
+                current_h3 = ""
+                if current_h2 == "Overview":
+                    current_h2 = ""   # flag: skip content in this section
+                continue
+            if block.startswith("### "):
+                _emit(current_h2, current_h3, h3_blocks)
+                h3_blocks = []
+                current_h3 = block.lstrip("# ").strip()
+                continue
+            if not current_h2:
+                continue   # overview content — captured via _extract_section
+            if current_h3:
+                h3_blocks.append(block)
+            else:
+                h2_blocks.append(block)
+
+        # flush trailing content
+        _emit(current_h2, current_h3, h3_blocks)
+        _emit(current_h2, "", h2_blocks)
+
         return chunks
 
     def _chunk_release_notes(self, path: Path) -> list[dict]:
-        """Split release notes by ## section heading (What's New / Known Issues).
+        """One chunk per H3 subsection; each chunk repeats the document header.
 
-        Each chunk carries the version so the retriever can filter by version.
+        Chunk structure:
+
+            {full title line + Release Date / Status metadata}
+
+            {H2 section name}
+            {H3 subsection name}
+            {H3 content — all blocks until the next H3 or H2}
+
+        H2 sections without H3 children (e.g. "No known issues") produce one chunk
+        with the H2 content directly.  The preamble (title + metadata) repeats in
+        every chunk so each is self-contained.
         """
         text = path.read_text(encoding="utf-8")
         version = _extract(text, r"v(\d+\.\d+(?:\.\d+)?)")
-        title = _first_heading(text)
 
-        chunks = []
-        for i, (section_name, section_text) in enumerate(_split_by_h2(text)):
+        # Everything before the first ## heading: H1 title + Release Date + Status
+        preamble = re.split(r"\n## ", text)[0].strip()
+
+        chunks: list[dict] = []
+        chunk_index = 0
+        current_h2 = ""
+        current_h3 = ""
+        h3_blocks: list[str] = []
+        h2_blocks: list[str] = []  # H2 content before any H3
+
+        def _emit(h2: str, h3: str, blocks: list[str]) -> None:
+            nonlocal chunk_index
+            if not blocks or not h2:
+                return
+            content = "\n\n".join(blocks)
+            heading_line = f"{h2}\n{h3}" if h3 else h2
+            chunk_text = f"{preamble}\n\n{heading_line}\n{content}"
             chunks.append({
-                "id": f"relnotes_{version.replace('.', '_')}_s{i}",
-                "text": f"{title}\n\n## {section_name}\n\n{section_text}",
+                "id": f"relnotes_{version.replace('.', '_')}_c{chunk_index}",
+                "text": chunk_text,
                 "metadata": {
                     "source_type": "release_note",
                     "version": version,
-                    "section": section_name,
+                    "section": h2,
+                    "subsection": h3,
                     "source_file": path.name,
+                    "chunk_index": chunk_index,
                 },
             })
+            chunk_index += 1
+
+        for block in re.split(r"\n\n+", text):
+            block = block.strip()
+            if not block:
+                continue
+            if block.startswith("# "):
+                continue
+            if block.startswith("## "):
+                _emit(current_h2, current_h3, h3_blocks)
+                h3_blocks = []
+                _emit(current_h2, "", h2_blocks)
+                h2_blocks = []
+                current_h2 = block.lstrip("# ").strip()
+                current_h3 = ""
+                continue
+            if block.startswith("### "):
+                _emit(current_h2, current_h3, h3_blocks)
+                h3_blocks = []
+                current_h3 = block.lstrip("# ").strip()
+                continue
+            if not current_h2:
+                continue   # preamble blocks — already captured
+            if current_h3:
+                h3_blocks.append(block)
+            else:
+                h2_blocks.append(block)
+
+        # flush trailing content
+        _emit(current_h2, current_h3, h3_blocks)
+        _emit(current_h2, "", h2_blocks)
+
         return chunks
-
-    def _chunk_past_ticket(self, path: Path) -> list[dict]:
-        """Store each past ticket as a single chunk.
-
-        Tickets are short (~600-800 chars) and cover exactly one incident end-to-end:
-        environment, symptom, diagnosis steps, and resolution. Splitting by section
-        produces fragments of 150-300 chars — too short to embed meaningfully — and
-        breaks the narrative context that makes tickets useful (e.g. the resolution
-        only makes sense alongside the symptom and environment).
-        """
-        text = path.read_text(encoding="utf-8")
-        ticket_id = path.stem
-        version = _extract(text, r"RadVision Pro v(\S+),")
-        related_kb = ",".join(re.findall(r"KB-\d+", text))
-
-        return [{
-            "id": ticket_id,
-            "text": text.strip(),
-            "metadata": {
-                "source_type": "past_ticket",
-                "ticket_id": ticket_id,
-                "version": version,
-                "related_kb": related_kb,
-                "source_file": path.name,
-            },
-        }]
 
 
 # ---------------------------------------------------------------------------
@@ -244,24 +358,19 @@ def _first_heading(text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _extract_section(text: str, section_name: str) -> str:
+    """Return the body of a named ## section (everything up to the next ## heading)."""
+    parts = re.split(r"\n## ", text)
+    for part in parts[1:]:
+        lines = part.split("\n", 1)
+        if lines[0].strip() == section_name:
+            return lines[1].strip() if len(lines) > 1 else ""
+    return ""
+
+
 def _extract(text: str, pattern: str) -> str:
     """Return the first capture group of pattern, or 'unknown'."""
     m = re.search(pattern, text)
     return m.group(1).strip() if m else "unknown"
 
 
-def _split_by_h2(text: str) -> list[tuple[str, str]]:
-    """Split a markdown document into (section_name, section_body) pairs by ## headings.
-
-    Skips the preamble before the first ## heading (title + metadata block).
-    Empty sections are dropped.
-    """
-    parts = re.split(r"\n## ", text)
-    results = []
-    for part in parts[1:]:  # skip preamble
-        lines = part.split("\n", 1)
-        name = lines[0].strip()
-        body = lines[1].strip() if len(lines) > 1 else ""
-        if body:
-            results.append((name, body))
-    return results

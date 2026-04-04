@@ -70,7 +70,7 @@ _SELECTOR_RULES: list[tuple[str, list[str]]] = [
     (
         r"\berror\b|\bfail\b|\bcrash\b|\btimeout\b|\breject\b|\bartifact\b"
         r"|\blag\b|\bslow\b|\b503\b|\bTLS\b|\bDICOM\b|\bFHIR\b",
-        ["kb_articles", "past_tickets"],
+        ["kb_articles"],
     ),
 ]
 
@@ -78,9 +78,9 @@ _SELECTOR_RULES: list[tuple[str, list[str]]] = [
 def select_indexes(state: dict) -> dict:
     """Choose which collections to search based on the rewritten query.
 
-    On a retry (rewrite_count > 0) always searches all four collections to
+    On a retry (rewrite_count > 0) always searches all three collections to
     widen the net. Otherwise the first matching rule wins; if no rule matches,
-    all four collections are searched.
+    all three collections are searched.
     """
     query = state.get("rewritten_query", state["query"])
     rewrite_count = state.get("rewrite_count", 0)

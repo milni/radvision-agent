@@ -8,7 +8,7 @@ questions:
 
   - id: "eval-01"
     query: "We're seeing AssocReject reason=0x0006 in the DICOM gateway logs after upgrading our F5. Running v4.2 on RHEL 8."
-    persona: "field_engineer"
+    persona: "support"
     expected_route: "error_pattern"
     expected_tools: ["log_analyzer"]
     expected_kb_ref: "KB-4231"
@@ -16,59 +16,134 @@ questions:
       - "TLS renegotiation"
       - "SCP_TLS_RENEGOTIATION=false"
       - "/etc/radvision/dicom.conf"
+    expected_answer: |
+      This is a known TLS renegotiation failure (KB-4231). The F5 BIG-IP firmware 17.x enables TLS
+      renegotiation by default, which RadVision Pro v4.2 rejects per DICOM PS3.15 security policy.
+
+      Resolution steps:
+      1. Open /etc/radvision/dicom.conf as root
+      2. Set: SCP_TLS_RENEGOTIATION=false
+      3. Restart: systemctl restart radvision-dicom
+      4. Verify: tail -f /var/log/radvision/dicom.log — no more TLS_RENEGO_FAIL entries
+
+      Alternative: disable TLS renegotiation on the F5 server-facing pool member.
+      Permanent fix: upgrade to RadVision Pro 4.2.1 (KB-4231 is resolved there).
+
+      Is the issue resolved?
     difficulty: "easy"
     notes: "Direct error pattern match. Should resolve in one pass."
 
   - id: "eval-02"
     query: "Getting VRAM_FALLBACK_TRIGGERED in the render logs. Cardiac images look weird."
-    persona: "support_engineer"
+    persona: "support"
     expected_route: "error_pattern"
-    expected_tools: ["log_analyzer", "compat_checker"]
+    expected_tools: ["log_analyzer"]
     expected_kb_ref: "KB-4298"
     expected_answer_contains:
-      - "GPU VRAM"
+      - "VRAM"
       - "PROGRESSIVE_RENDER=true"
+    expected_answer: |
+      This matches KB-4298: Cardiac 4D rendering artifacts caused by GPU VRAM exhaustion.
+      The VRAM_FALLBACK_TRIGGERED log indicates your GPU has less than 20 GB VRAM, causing
+      the engine to fall back to CPU compositing and produce artifacts.
+
+      Resolution steps:
+      1. Open /etc/radvision/render.conf as root
+      2. Set:
+           PROGRESSIVE_RENDER=true
+           CARDIAC_4D_FRAMERATE=15
+      3. Restart: systemctl restart radvision-render
+      4. Ask the radiologist to reopen the cardiac study — artifacts should be gone at 15fps
+
+      Note: PROGRESSIVE_RENDER=true increases CPU load ~20%. Monitor utilization after applying.
+      Long-term recommendation: upgrade to NVIDIA A5000 (24 GB) or A6000 (48 GB) for full 30fps support.
+
+      Is the issue resolved?
     difficulty: "medium"
-    notes: "Log analyzer matches KB-4298, but sufficiency check should also trigger compat checker to determine GPU-specific advice."
+    notes: "Log analyzer matches KB-4298. Sufficiency passes on the log match alone. Compat_checker does not fire — sufficiency fallback from error_pattern goes to docs_kb (RAG), not config_check."
 
   # === TRIAGE ROUTES TO RAG ===
 
   - id: "eval-03"
     query: "How do I configure DICOM send to an external PACS system?"
-    persona: "field_engineer"
+    persona: "support"
     expected_route: "docs_kb"
     expected_tools: []
     expected_answer_contains:
       - "AE title"
-      - "SCP_PORT"
+      - "SCU_DESTINATION_AE"
       - "C-STORE"
+    expected_answer: |
+      To configure DICOM C-STORE send to an external PACS:
+
+      1. Get the PACS AE title, IP address, and DICOM port from your PACS administrator
+      2. Open /etc/radvision/dicom.conf as root and set:
+           SCU_DESTINATION_AE=HOROS_PACS:192.168.1.50:11112
+         Format: AE_TITLE:HOST:PORT (comma-separate multiple destinations)
+      3. On the receiving PACS, whitelist the RadVision Pro AE title (default: RADVISION)
+      4. Restart: systemctl restart radvision-dicom
+      5. Test: storescu --aet RADVISION --call HOROS_PACS 192.168.1.50 11112
+
+      Common failure cause: AE title mismatch — both sides must use exactly the same AE title string (case-sensitive).
+
+      Is the issue resolved?
     difficulty: "easy"
-    notes: "Pure documentation retrieval. No tools needed."
+    notes: "Pure documentation retrieval from dicom_gateway.md. No tools needed."
 
   - id: "eval-04"
-    query: "Customer is asking about our real-time collaboration features. What can I tell them?"
+    query: "Our customer is asking about real-time collaboration features. What can RadVision Pro do?"
     persona: "sales"
     expected_route: "docs_kb"
     expected_tools: []
     expected_answer_contains:
       - "screen sharing"
       - "annotations"
-      - "real-time"
+      - "WebRTC"
+    expected_answer: |
+      RadVision Pro includes a Collaboration Hub that enables real-time clinical collaboration
+      between radiologists and clinicians. Key capabilities include:
+
+      - Live screen sharing of the RadVision Pro viewport over WebRTC
+      - Synchronized annotation tools for markup during shared reading sessions
+      - Integrated report editing and real-time chat
+      - Multi-site support for distributed radiology teams
+
+      It's well suited for tumor boards, remote consultations, and teaching environments.
+      I'd be happy to arrange a demo to show these features in action.
     difficulty: "easy"
-    notes: "Sales persona should get a feature-focused, non-technical answer."
+    notes: "Sales persona should get a feature-focused, customer-friendly answer. Answer should not include raw config file paths."
 
   - id: "eval-05"
-    query: "What changed between v4.1 and v4.2? We're planning an upgrade."
-    persona: "support_engineer"
+    query: "What were the major changes introduced in v4.2 compared to v4.1? We are planning an upgrade."
+    persona: "support"
     expected_route: "docs_kb"
     expected_tools: []
     expected_answer_contains:
       - "FHIR R4"
       - "Cardiac 4D"
       - "TLS 1.3"
-      - "progressive memory allocation"
+      - "Collaboration Hub"
+    expected_answer: |
+      RadVision Pro v4.2 introduced the following major changes over v4.1:
+
+      New features:
+      - Collaboration Hub: new component for real-time WebRTC screen sharing, annotations, and chat
+      - FHIR R4: new REST endpoint (/fhir/r4) for EHR integration
+      - Cardiac 4D Visualization Module: 4D cardiac cine playback with progressive rendering
+      - DICOM Gateway: TLS 1.3 support added alongside existing TLS 1.2
+      - 3D Rendering Engine: progressive memory allocation for improved VRAM management
+
+      Known issues introduced in v4.2 (review before upgrading):
+      - KB-4231: DICOM association failures with TLS renegotiation (F5/HAProxy) — fixed in 4.2.1
+      - KB-4298: Cardiac 4D artifacts on GPUs with <20 GB VRAM (T4, A2) — workaround available
+      - KB-4315: FHIR endpoint 503 errors during peak load — partially fixed in 4.2.1
+      - KB-4330: Screen sharing latency on RHEL 9 — workaround available
+
+      Recommend upgrading directly to 4.2.1 to pick up the fixes for KB-4231 and KB-4315.
+
+      Is there anything specific about the upgrade you'd like to dig into?
     difficulty: "medium"
-    notes: "Should retrieve from release notes. Multi-chunk synthesis."
+    notes: "Should retrieve from release notes. Multi-chunk synthesis across v4.1 and v4.2 release notes."
 
   # === TRIAGE ROUTES TO COMPATIBILITY CHECKER (Tool 2) ===
 
@@ -79,48 +154,105 @@ questions:
     expected_tools: ["compat_checker"]
     expected_answer_contains:
       - "unsupported"
-      - "insufficient VRAM"
+      - "VRAM"
       - "A5000"
+    expected_answer: |
+      Vessel Analysis is not supported on the NVIDIA T4 in RadVision Pro 4.2 due to insufficient
+      VRAM — the T4's 16 GB is below the threshold required for this feature.
+
+      The good news is that Vessel Analysis is fully supported on the NVIDIA A5000 (24 GB) and
+      A6000 (48 GB). Upgrading the GPU would unlock Vessel Analysis along with full support for
+      all other advanced features. I'd be happy to discuss the upgrade path with your team.
     difficulty: "easy"
-    notes: "Direct compat matrix lookup. Sales persona should get upgrade recommendation."
+    notes: "Direct compat matrix lookup. Sales persona should frame answer as an upgrade opportunity."
 
   - id: "eval-07"
-    query: "Client wants to deploy on AMD MI210. What features work?"
+    query: "A client wants to deploy on AMD MI210. Which RadVision Pro features will work?"
     persona: "sales"
     expected_route: "config_check"
     expected_tools: ["compat_checker"]
     expected_answer_contains:
       - "experimental"
       - "ROCm"
-      - "Cardiac 4D unsupported"
+      - "Cardiac 4D"
+    expected_answer: |
+      The AMD MI210 has partial support in RadVision Pro 4.2. Here's the feature breakdown:
+
+      - MPR: fully supported
+      - MIP: fully supported
+      - VRT: experimental (ROCm 5.4+ required — not recommended for production)
+      - Cardiac 4D: not yet validated on this GPU
+      - Vessel Analysis: not supported on this GPU
+
+      The MI210's 64 GB VRAM is excellent for large datasets, but AMD GPU support is still
+      maturing in our platform. For a production deployment where Cardiac 4D and Vessel Analysis
+      are required, NVIDIA A5000 or A6000 would be the safer choice today. I'd recommend
+      discussing the roadmap with our product team if the client is committed to AMD.
     difficulty: "easy"
-    notes: "Compat lookup with nuanced answer — some features work, some don't."
+    notes: "Compat lookup with a nuanced answer — some features work, some don't. Sales answer should be measured."
 
   # === MULTI-STEP / SUFFICIENCY RETRY ===
 
   - id: "eval-08"
-    query: "Customer at St. Mary's running v4.2 on RHEL 8 with T4 GPU reports intermittent 3D cardiac rendering artifacts since last Tuesday's update."
-    persona: "field_engineer"
-    expected_route: "docs_kb"
-    expected_tools: ["compat_checker"]
+    query: "Customer at St. Mary's running v4.2 on RHEL 8 with a T4 GPU reports intermittent 3D cardiac rendering artifacts since last Tuesday's patch."
+    persona: "support"
+    expected_route: "error_pattern"
+    expected_tools: ["log_analyzer"]
     expected_answer_contains:
       - "T4"
       - "VRAM"
       - "PROGRESSIVE_RENDER"
       - "KB-4298"
+    expected_answer: |
+      This matches KB-4298: Cardiac 4D rendering artifacts on low-VRAM GPUs. The NVIDIA T4 has
+      16 GB VRAM, which falls below the 20 GB threshold required for full Cardiac 4D playback.
+      The patch likely changed a rendering parameter that exposed this limitation.
+
+      Resolution steps:
+      1. Open /etc/radvision/render.conf as root
+      2. Set:
+           PROGRESSIVE_RENDER=true
+           CARDIAC_4D_FRAMERATE=15
+      3. Restart: systemctl restart radvision-render
+      4. Have the radiologist reopen the cardiac study and confirm artifacts are gone
+
+      Note: reduced framerate is a clinical trade-off — confirm with radiology leadership.
+      Long-term: upgrade to NVIDIA A5000 (24 GB) or A6000 (48 GB) for full 30fps support.
+
+      Is the issue resolved?
     difficulty: "hard"
-    notes: "Key test: initial RAG should find KB-4298, but sufficiency check should also trigger compat_checker to confirm T4 limitation. Tests the retry loop."
+    notes: "Query describes a known rendering artifact symptom — triage should route to error_pattern (log analyzer matches KB-4298 on VRAM_FALLBACK pattern). RAG is the sufficiency fallback if log analyzer doesn't match. Tests that KB-4298 Resolution section is included in the support answer."
 
   - id: "eval-09"
-    query: "FHIR API is down every morning. We're on v4.2 with Ubuntu. What's happening?"
-    persona: "support_engineer"
+    query: "FHIR API is returning 503 every morning. We are on v4.2 running Ubuntu. What is happening?"
+    persona: "support"
     expected_route: "docs_kb"
     expected_tools: []
     expected_kb_ref: "KB-4315"
     expected_answer_contains:
       - "FHIR_CONNECTION_POOL"
-      - "concurrent requests"
+      - "connection pool"
       - "/etc/radvision/integration.conf"
+    expected_answer: |
+      This matches KB-4315: FHIR R4 endpoint returns 503 during peak load. The default connection
+      pool size of 10 is exhausted when multiple workstations make burst FHIR requests at shift
+      start (typically 8–10 AM). Queued requests time out after 30 seconds and return 503.
+
+      Resolution steps:
+      1. Estimate your pool size: (peak_concurrent_readers × 2) + 10
+         Example for 35 readers: (35 × 2) + 10 = 80
+      2. Open /etc/radvision/integration.conf as root and set:
+           FHIR_CONNECTION_POOL=80
+      3. Restart: systemctl restart radvision-integration
+      4. Monitor during next peak: grep "FHIR_503\|pool exhausted" /var/log/radvision/integration.log
+
+      Memory note: each connection ~2 MB heap. Pool of 80 adds ~160 MB — verify INTEGRATION_JVM_HEAP
+      is sufficient (default 2 GB, same conf file).
+
+      Upgrading to 4.2.1 adds auto-scaling (FHIR_CONNECTION_POOL_MAX), which reduces the need
+      for manual tuning.
+
+      Is the issue resolved?
     difficulty: "medium"
     notes: "Should find KB-4315 through RAG. Sufficiency check should pass on first try."
 
@@ -128,61 +260,124 @@ questions:
 
   - id: "eval-10"
     query: "Everything is broken. Nothing works since the update."
-    persona: "support_engineer"
+    persona: "support"
     expected_route: "docs_kb"
     expected_tools: []
-    expected_outcome: "clarify"
+    expected_outcome: "resolved"
+    expected_answer: |
+      No relevant information was found for this query in the knowledge base — the description
+      is too general to match a known issue. To help you effectively, please provide:
+
+      - Which version of RadVision Pro was updated to (and from)?
+      - Which component or feature is affected (e.g. DICOM Gateway, rendering, FHIR)?
+      - What specific symptoms or error messages are you seeing?
+
+      Please verify the issue details and consider escalating to the engineering team if the
+      problem is widespread.
     difficulty: "hard"
-    notes: "Vague query with no actionable entities. Escalation gate should ask for clarification: which version? which component? what symptoms?"
+    notes: "Vague query with no actionable entities — RAG will find nothing. Synthesizer generates a no-evidence response asking the user to provide more context (version, component, symptoms). Grounding auto-passes (no technical claims). Escalation resolves with this redirect rather than asking for clarification as a separate outcome."
 
   - id: "eval-11"
-    query: "We found a potential PHI data leak through the collaboration module's WebRTC signaling."
-    persona: "field_engineer"
+    query: "We found a potential PHI data leak through the collaboration module's WebRTC signaling channel."
+    persona: "support"
     expected_route: "docs_kb"
     expected_tools: []
     expected_outcome: "escalate"
+    expected_answer: |
+      This case has been escalated to a specialist. Reason: PHI data leak / security incident
+      detected. You will be contacted shortly.
     difficulty: "hard"
-    notes: "Security issue. Agent should NOT try to resolve this — should escalate with full context to human expert."
+    notes: "Security/PHI issue. Agent must NOT try to resolve — should escalate with full context. Safety regex matches on 'PHI' and 'data leak' — hard escalation rule bypasses LLM."
 
   # === GROUNDING CHECKER TESTS ===
 
   - id: "eval-12"
-    query: "Is there a known issue with DICOM on Windows Server 2022?"
-    persona: "support_engineer"
+    query: "Is there a known issue with RadVision Pro on Windows Server 2022?"
+    persona: "support"
     expected_route: "docs_kb"
     expected_tools: []
     expected_answer_contains:
       - "Visual C++ 2022 runtime"
+    expected_answer: |
+      Windows Server 2022 is a supported platform for RadVision Pro. There are no KB-tracked
+      bugs specific to Windows Server 2022 at this time.
+
+      Deployment requirement: Visual C++ 2022 runtime (x64) must be installed before RadVision Pro.
+      Without it, the application will fail to start.
+
+      Note: KB-3102 (NVIDIA driver 535.x multi-monitor crash) does NOT affect Windows Server 2022
+      — that issue is specific to the OpenGL context sharing on Linux (RHEL 8, RHEL 9, Ubuntu).
+      Windows uses DirectX and is unaffected.
+
+      Is there anything specific you are observing on this platform?
     difficulty: "medium"
-    notes: "Tests grounding: there's no specific KB for DICOM+Windows, only a platform note. Agent should report what it finds without inventing issues."
+    notes: "Tests grounding: Windows is a supported platform with a runtime requirement, but no KB-tracked bugs. Agent should report the platform note without inventing issues. Multi-monitor crash (KB-3102) explicitly does NOT affect Windows."
 
   # === PERSONA DIFFERENTIATION ===
 
   - id: "eval-13"
-    query: "T4 GPU — cardiac 4D rendering issues. What's the situation?"
+    query: "A prospect currently has T4 GPUs and wants to run Cardiac 4D. What should I tell them?"
     persona: "sales"
     expected_route: "config_check"
     expected_tools: ["compat_checker"]
-    expected_answer_focus: "upgrade opportunity, customer-facing language"
+    expected_answer_focus: "upgrade opportunity, customer-facing language, A5000 recommendation"
+    expected_answer: |
+      The NVIDIA T4 has limited support for Cardiac 4D in RadVision Pro — it can run the feature,
+      but at a reduced framerate (15fps instead of 30fps) and requires a specific configuration
+      to avoid rendering artifacts.
+
+      For a smooth, production-grade Cardiac 4D experience, we recommend upgrading to:
+      - NVIDIA A5000 (24 GB VRAM) — full Cardiac 4D support at 30fps
+      - NVIDIA A6000 (48 GB VRAM) — full support for all features including high-volume cardiac reads
+
+      This is a great opportunity to position the GPU upgrade as part of the RadVision Pro
+      deployment. The T4 limitation is a hardware constraint, not a software one, so upgrading
+      the GPU is the clean path to full capability.
     difficulty: "medium"
-    notes: "Same underlying issue as eval-08, but sales persona should get upgrade-focused positioning, not technical troubleshooting steps."
+    notes: "Sales persona should frame the T4 limitation as an upgrade conversation, not a troubleshooting exercise. No config file paths."
 
   - id: "eval-14"
-    query: "T4 GPU — cardiac 4D rendering issues. What's the situation?"
-    persona: "field_engineer"
+    query: "T4 GPU — Cardiac 4D shows rendering artifacts. Walk me through the fix step by step."
+    persona: "support"
     expected_route: "config_check"
     expected_tools: ["compat_checker"]
-    expected_answer_focus: "exact config changes, file paths, workaround commands"
+    expected_answer_focus: "numbered resolution steps, PROGRESSIVE_RENDER config, KB-4298 reference"
+    expected_answer: |
+      This is a known issue on the NVIDIA T4 (KB-4298). The T4's 16 GB VRAM falls below the
+      20 GB threshold for Cardiac 4D, causing the engine to fall back to CPU compositing and
+      produce artifacts. Here is the fix:
+
+      1. Open /etc/radvision/render.conf as root
+      2. Set the following parameters:
+           PROGRESSIVE_RENDER=true
+           CARDIAC_4D_FRAMERATE=15
+      3. Restart the rendering service:
+           systemctl restart radvision-render
+      4. Have the radiologist reopen the cardiac study and confirm the artifacts are gone
+      5. Monitor CPU utilization — PROGRESSIVE_RENDER increases CPU load by ~20%
+
+      Note: the 15fps framerate is a clinical trade-off. Confirm with radiology leadership before
+      deploying to production. Long-term recommendation: upgrade to NVIDIA A5000 (24 GB) or
+      A6000 (48 GB) for full 30fps support without workarounds (KB-4298).
+
+      Is the issue resolved?
     difficulty: "medium"
-    notes: "Identical query to eval-13 but field_engineer persona. Answer should have config paths and exact settings."
+    notes: "Same underlying issue as eval-13 but support persona. Answer must have numbered steps, config file paths, and KB reference."
 
   # === EDGE CASE ===
 
   - id: "eval-15"
-    query: "Can RadVision Pro do AI-based auto-segmentation of tumors?"
+    query: "Can RadVision Pro perform AI-based auto-segmentation of tumors?"
     persona: "sales"
     expected_route: "docs_kb"
     expected_tools: []
     expected_outcome: "resolved"
+    expected_answer: |
+      AI-based auto-segmentation of tumors is not a current feature of RadVision Pro. The
+      platform focuses on 2D/3D visualization, DICOM workflow, and clinical collaboration
+      rather than AI-driven segmentation.
+
+      I'd be happy to connect you with our product team to discuss your use case and our
+      roadmap — this is an area of active interest in the medical imaging space.
     difficulty: "medium"
-    notes: "Feature that doesn't exist in the product. Agent should honestly say this isn't available rather than hallucinating capabilities."
+    notes: "Feature that does not exist in the product. Agent should honestly say this is not available rather than hallucinating capabilities. Good grounding test — no corpus content supports this feature."

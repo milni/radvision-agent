@@ -10,15 +10,6 @@ Reads data/seed/product_spec.yaml and writes markdown files into data/corpus/:
 
   release_notes/ — Per-version changelogs listing new features and known issues.
 
-  past_tickets/  — Raw support case records from customer incidents. Unlike KB
-                   articles (which give the clean, canonical answer), tickets
-                   capture the engineer's diagnosis steps, environment details,
-                   and field experience that may not appear in a KB article.
-
-Together, KB articles and past tickets give the RAG agent both the official fix
-and real-world field context — which is why they are separate collections with
-different chunking strategies in Phase 3.
-
 The markdown structure is intentional: Phase 3 uses different chunking
 strategies per collection (by section heading, by paragraph, etc.).
 Run from the project root:
@@ -254,84 +245,18 @@ def generate_release_notes(spec: dict) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
-# Past Tickets
-# Resolution section is prominent for Phase 3 chunking.
-# ---------------------------------------------------------------------------
-
-def generate_past_tickets(spec: dict) -> list[Path]:
-    """Generate one markdown file per past support ticket template.
-
-    Past tickets are raw case records from real customer incidents. Unlike KB
-    articles (generate_kb_articles), which give the clean canonical answer,
-    tickets capture the engineer's diagnosis steps, environment specifics, and
-    field observations. They complement KB articles by providing real-world
-    context: e.g. a ticket may note that framerate also needed reducing, or
-    that a hardware upgrade was recommended — details absent from the KB article.
-
-    Each file captures the customer environment, symptom, step-by-step diagnosis,
-    and resolution. The prominent ## Resolution section is the primary chunk target
-    for Phase 3, since it contains the actionable fix.
-
-    Args:
-        spec: Parsed product_spec.yaml as a dict.
-
-    Returns:
-        List of paths to the written files.
-    """
-    out_dir = CORPUS_DIR / "past_tickets"
-    written: list[Path] = []
-
-    for ticket in spec.get("ticket_templates", []):
-        tid = ticket["ticket_id"]
-        env = ticket["environment"]
-        persona = ticket["persona_filed_by"].replace("_", " ").title()
-
-        steps = "\n".join(f"{i+1}. {s}" for i, s in enumerate(ticket.get("diagnosis_steps", [])))
-        related = ", ".join(ticket.get("related_kb", [])) or "None"
-
-        content = f"""\
-# {tid}: {ticket['title']}
-
-**Customer:** {ticket['customer']}
-**Filed by:** {persona}
-**Environment:** RadVision Pro v{env['version']}, {env['os']}, {env['gpu']}
-
-## Symptom
-
-{ticket['symptom']}
-
-## Diagnosis Steps
-
-{steps}
-
-## Resolution
-
-{ticket['resolution']}
-
-**Resolution time:** {ticket['resolution_time_hours']} hours
-**Related KB articles:** {related}
-"""
-        path = out_dir / f"{tid}.md"
-        _write(path, content)
-        written.append(path)
-
-    return written
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Run all four generators and print a summary of written files."""
+    """Run all three generators and print a summary of written files."""
     spec = yaml.safe_load(SEED_PATH.read_text())
 
     kb = generate_kb_articles(spec)
     docs = generate_product_docs(spec)
     notes = generate_release_notes(spec)
-    tickets = generate_past_tickets(spec)
 
-    all_files = kb + docs + notes + tickets
+    all_files = kb + docs + notes
     print(f"Generated {len(all_files)} files into {CORPUS_DIR}/\n")
     for f in all_files:
         rel = f.relative_to(CORPUS_DIR.parent.parent)

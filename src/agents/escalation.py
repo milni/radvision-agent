@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 _SAFETY_RE = re.compile(
     r"\bsafety\b|\bpatient\b|\bcritical.{0,10}(care|system)\b"
-    r"|\bemergency\b|\bHIPAA\b|\bcompliance\b|\bregulat\b",
+    r"|\bemergency\b|\bHIPAA\b|\bcompliance\b|\bregulat\b"
+    r"|\bPHI\b|\bdata.{0,6}leak\b|\bsecurity.{0,10}(breach|vulnerabil|incident)\b",
     re.IGNORECASE,
 )
 
@@ -41,9 +42,13 @@ Grounding score: {grounding_score}
 Draft response: {draft}
 
 Choose exactly one outcome:
-- "resolved"  — the draft answers the query with sufficient grounded evidence
-- "clarify"   — the query is too vague to answer (missing version/OS/component info)
-- "escalate"  — safety/compliance issue, critical error with no KB article, or no useful evidence found
+- "resolved"  — the draft answers the query with sufficient grounded evidence.
+  Use this when evidence_sufficient is true, OR when the draft contains a direct answer
+  (e.g. a compatibility table, feature list, or step-by-step resolution).
+  Missing version or OS in entities does NOT prevent "resolved" if a tool already answered.
+- "clarify"   — use ONLY when evidence_sufficient is false AND the draft contains no useful answer
+  because the query is genuinely too vague to look anything up (e.g. a one-word query with no context).
+- "escalate"  — safety/compliance issue, critical error with no KB article, or no useful evidence found.
 
 Return a JSON object: {{"outcome": "<resolved|clarify|escalate>", "reason": "<one sentence>"}}
 Return only the JSON object."""
@@ -66,10 +71,20 @@ def escalation_node(state: dict) -> dict:
     entities:            dict  = state.get("entities", {})
     draft:               str   = state.get("draft_response", "")
 
+    tool_results: list = state.get("tool_results", [])
+    rag_results:  list = state.get("rag_results", [])
+
     # Hard rules — no LLM override
     if _SAFETY_RE.search(query):
         outcome = "escalate"
         reason  = "safety or compliance keywords detected in query"
+
+    elif not tool_results and not rag_results:
+        # No data was found anywhere — the synthesizer produced a polished "not in product"
+        # redirect. That is a complete, valid response; escalating to a specialist is wrong.
+        outcome = "resolved"
+        reason  = "no evidence found; synthesizer produced a not-in-product redirect"
+        logger.info("Escalation: no evidence path → resolved with redirect")
 
     elif grounding_score < _ESCALATION_THRESHOLD:
         outcome = "escalate"
@@ -88,6 +103,13 @@ def escalation_node(state: dict) -> dict:
         if outcome not in ("resolved", "clarify", "escalate"):
             outcome = "resolved"
         reason = data.get("reason", "")
+
+        # Hard override: if the tool/RAG evidence was sufficient, "clarify" makes no sense.
+        # The agent already answered the query — do not ask the user for more details.
+        if outcome == "clarify" and evidence_sufficient:
+            logger.info("Escalation: overriding 'clarify' → 'resolved' (evidence_sufficient=True)")
+            outcome = "resolved"
+            reason = "evidence was sufficient; override applied"
 
     logger.info("Escalation: outcome=%s — %s", outcome, reason)
     set_tags_safe({"outcome": outcome})

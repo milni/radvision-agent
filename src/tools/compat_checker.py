@@ -58,6 +58,24 @@ class CompatibilityChecker:
             len(self._gpus), len(self._oses), len(self._feature_index),
         )
 
+    def _resolve_gpu(self, gpu: str) -> str:
+        """Normalize gpu name to match the matrix key.
+
+        Tries exact match first, then common vendor prefix variants so that
+        triage-extracted short names like 'T4' match 'NVIDIA T4' in the matrix.
+        """
+        candidates = [gpu, f"NVIDIA {gpu}", f"AMD {gpu}", f"Intel {gpu}"]
+        all_gpus = {g for (_, g) in self._feature_index} | set(self._gpus)
+        for c in candidates:
+            if c in all_gpus:
+                return c
+        return gpu  # return as-is; caller handles not-found
+
+    def versions_for_gpu(self, gpu: str) -> list[str]:
+        """Return all RadVision Pro versions that have compatibility data for this GPU."""
+        gpu = self._resolve_gpu(gpu)
+        return sorted({v for (v, g) in self._feature_index if g == gpu})
+
     def check_compatibility(self, version: str, gpu: str, feature: str) -> CompatibilityResult:
         """Look up feature support for a given version and GPU.
 
@@ -66,6 +84,7 @@ class CompatibilityChecker:
             gpu: e.g. "NVIDIA T4"
             feature: e.g. "Cardiac 4D" or "Cardiac_4D" or "MPR"
         """
+        gpu = self._resolve_gpu(gpu)
         feature_key = feature.strip().lower().replace("_", " ")
         features = self._feature_index.get((version, gpu))
 

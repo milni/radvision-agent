@@ -45,11 +45,10 @@ with st.sidebar:
 
     persona = st.selectbox(
         "Persona",
-        options=["support", "field_engineer", "sales"],
+        options=["support", "sales"],
         format_func=lambda p: {
-            "support":        "Support Engineer",
-            "field_engineer": "Field Engineer",
-            "sales":          "Sales Engineer",
+            "support": "Support Engineer",
+            "sales":   "Sales Engineer",
         }[p],
     )
 

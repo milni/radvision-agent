@@ -32,7 +32,8 @@ def sufficiency_node(state: dict) -> dict:
     retry_count:  int        = state.get("retry_count", 0)
 
     has_log_match   = any(r.get("matched") for r in tool_results)
-    has_compat      = any(r.get("status") in ("supported", "limited") for r in tool_results)
+    has_compat      = any(r.get("status") in ("supported", "limited", "unsupported", "experimental")
+                          for r in tool_results)
     top_rag_score   = rag_results[0]["score"] if rag_results else 0.0
     has_rag         = top_rag_score >= RAG_RELEVANCE_THRESHOLD
 

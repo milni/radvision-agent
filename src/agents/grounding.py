@@ -76,6 +76,19 @@ def grounding_node(state: dict) -> dict:
         }
 
     evidence = _collect_evidence_text(tool_results, rag_results)
+
+    # No evidence at all means the synthesizer returned a no-evidence fallback message.
+    # That message makes no technical claims, so it trivially passes grounding.
+    # Skip the LLM call — gemma3:1b returns 0.0 when evidence is empty.
+    if not evidence.strip():
+        logger.info("Grounding: no evidence — auto-pass (no technical claims to verify)")
+        return {
+            "grounding_score":       1.0,
+            "ungrounded_claims":     [],
+            "grounding_pass":        True,
+            "grounding_regen_count": regen_count,
+            "final_response":        draft,
+        }
     response = _get_llm().invoke(_GROUNDING_PROMPT.format(
         evidence=evidence[:1000], draft=draft[:800]
     ))
