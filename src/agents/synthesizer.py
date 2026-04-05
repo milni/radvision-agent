@@ -21,10 +21,15 @@ _MAX_EVIDENCE_CHARS = 1200
 
 _PERSONA_INSTRUCTION = {
     "support": (
-        "You are assisting a support engineer. Provide numbered resolution steps. "
+        "You are assisting a support engineer. "
+        "Include KB article references where available. "
+        "End with a confirmation prompt asking whether the issue is resolved."
+    ),
+    "support_with_kb": (
+        "You are assisting a support engineer. "
+        "KB Workaround and/or KB Resolution sections are provided below. "
+        "Present ONLY those sections as the resolution — do not generate your own steps. "
         "Include KB article references. "
-        "If 'KB Workaround' or 'KB Resolution' blocks are present in the evidence, "
-        "include them verbatim in your response under matching headings. "
         "End with a confirmation prompt asking whether the issue is resolved."
     ),
     "sales": (
@@ -39,15 +44,19 @@ _SYNTH_PROMPT = """\
 Using ONLY the evidence below, write a concise support response.
 Do not invent facts not present in the evidence.
 Do not start with preambles like "Okay", "Sure", "Here's", "Subject:", or "Thank you for contacting". Begin directly with the content.
-
+{kb_prohibition}
 Evidence:
 {evidence}
-{resolution_block}
-References: {refs}
+{resolution_block}References: {refs}
 
 Query: {query}
 
 Response:"""
+
+_KB_PROHIBITION = (
+    "Do not output any KB Workaround or KB Resolution heading — "
+    "no such sections exist for this query.\n"
+)
 
 _NO_EVIDENCE_PROMPT = {
     "sales": (
@@ -136,24 +145,29 @@ def _best_evidence_text(tool_results: list[dict], rag_results: list[dict]) -> st
     if compat_rows:
         lines = []
         for r in compat_rows:
-            feature  = r.get("checked_feature", r.get("feature", ""))
-            version  = r.get("checked_version", r.get("version", ""))
-            gpu      = r.get("gpu", "")
-            status   = r.get("status", "")
-            reason   = r.get("reason", "")
-            rec      = r.get("recommendation", "")
-            line = f"Feature: {feature} | Version: {version} | GPU: {gpu} | Status: {status}"
-            if reason:
-                line += f" | {reason}"
+            feature = r.get("checked_feature", r.get("feature", ""))
+            version = r.get("checked_version", r.get("version", ""))
+            gpu     = r.get("gpu", "")
+            status  = r.get("status", "")
+            reason  = r.get("reason", "")
+            rec     = r.get("recommendation", "")
+            # Write as plain prose so the LLM does not treat it as a form to fill
+            parts = [f"{feature} on {gpu} (v{version}): {status}."]
+            if reason and reason.lower() != status.lower():
+                parts.append(reason)
             if rec:
-                line += f"\nRecommendation: {rec}"
-            lines.append(line)
-        return "\n\n".join(lines)[:_MAX_EVIDENCE_CHARS]
+                parts.append(rec)
+            lines.append(" ".join(parts))
+        return "\n".join(lines)[:_MAX_EVIDENCE_CHARS]
     relevant_rag = [r for r in rag_results if r.get("score", 0) >= RAG_RELEVANCE_THRESHOLD * 1.5]
     if relevant_rag:
         parts: list[str] = []
         budget = _MAX_EVIDENCE_CHARS
         for r in relevant_rag:
+            # Skip Workaround/Resolution chunks — they are injected separately
+            # via resolution_block for support persona, so the LLM won't see them twice.
+            if r.get("metadata", {}).get("section") in ("Workaround", "Resolution"):
+                continue
             chunk = r["text"]
             if len(chunk) > budget:
                 parts.append(chunk[:budget])
@@ -208,11 +222,13 @@ def synthesizer_node(state: dict) -> dict:
             for kb_id, sections in kb_sections.items():
                 for section_name, text in sections.items():
                     parts.append(f"KB {section_name} — {kb_id}:\n{text}")
-            resolution_block = "\n" + "\n\n".join(parts) + "\n"
+            resolution_block = "\n" + "\n\n".join(parts) + "\n\n"
             logger.info("Synthesizer: appended sections for %s", {k: list(v) for k, v in kb_sections.items()})
 
+    persona_key = "support_with_kb" if (persona == "support" and resolution_block) else persona
     prompt = _SYNTH_PROMPT.format(
-        persona_instruction=_PERSONA_INSTRUCTION.get(persona, _PERSONA_INSTRUCTION["support"]),
+        persona_instruction=_PERSONA_INSTRUCTION.get(persona_key, _PERSONA_INSTRUCTION["support"]),
+        kb_prohibition="" if resolution_block else _KB_PROHIBITION,
         evidence=evidence,
         resolution_block=resolution_block,
         refs=", ".join(refs) if refs else "none",
