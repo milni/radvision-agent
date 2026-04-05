@@ -8,7 +8,7 @@ data/vectorstore/ directory.
 
 import pytest
 
-from src.rag.ingest import CorpusIngestor, _split_by_h2, _extract, _first_heading
+from src.rag.ingest import CorpusIngestor, _extract, _first_heading
 from src.rag.retriever import Retriever
 from src.config import CORPUS_DIR
 
@@ -46,28 +46,28 @@ def retriever(vectorstore_dir):
 
 class TestIngestionCounts:
     def test_kb_articles_chunk_count(self, vectorstore_dir):
-        """One chunk per KB article — 6 articles = 6 chunks."""
+        """6 articles × ~5 H2 sections each = ~30 chunks (one chunk per section)."""
         ingestor = CorpusIngestor(vectorstore_dir=vectorstore_dir)
         col = ingestor._client.get_collection("kb_articles")
-        assert col.count() == 6
+        assert col.count() >= 20
 
     def test_product_docs_chunk_count(self, vectorstore_dir):
-        """4 product docs, each with multiple paragraphs."""
+        """4 product docs with multiple H3 subsections each."""
         ingestor = CorpusIngestor(vectorstore_dir=vectorstore_dir)
         col = ingestor._client.get_collection("product_docs")
-        assert col.count() >= 10
+        assert col.count() >= 20
 
     def test_release_notes_chunk_count(self, vectorstore_dir):
-        """4 versions × 2 sections (What's New + Known Issues) = 8 chunks."""
+        """4 versions with multiple H3 subsections each."""
         ingestor = CorpusIngestor(vectorstore_dir=vectorstore_dir)
         col = ingestor._client.get_collection("release_notes")
-        assert col.count() == 8
+        assert col.count() >= 15
 
-    def test_past_tickets_chunk_count(self, vectorstore_dir):
-        """One chunk per ticket — 5 tickets = 5 chunks."""
+    def test_only_three_collections_exist(self, vectorstore_dir):
+        """Only kb_articles, product_docs, and release_notes are ingested."""
         ingestor = CorpusIngestor(vectorstore_dir=vectorstore_dir)
-        col = ingestor._client.get_collection("past_tickets")
-        assert col.count() == 5
+        names = {c.name for c in ingestor._client.list_collections()}
+        assert names == {"kb_articles", "product_docs", "release_notes"}
 
 
 # ---------------------------------------------------------------------------
@@ -96,9 +96,9 @@ class TestRetrievalStructure:
         assert scores == sorted(scores, reverse=True)
 
     def test_source_collection_matches_queried(self, retriever: Retriever):
-        results = retriever.retrieve("DICOM TLS", ["past_tickets"], top_k=3)
+        results = retriever.retrieve("DICOM TLS renegotiation", ["kb_articles"], top_k=3)
         for r in results:
-            assert r["source_collection"] == "past_tickets"
+            assert r["source_collection"] == "kb_articles"
 
     def test_metadata_has_source_type(self, retriever: Retriever):
         results = retriever.retrieve("cardiac rendering", ["kb_articles"], top_k=1)
@@ -155,26 +155,16 @@ class TestRetrievalRelevance:
         kb_ids = [r["metadata"].get("kb_id") for r in results]
         assert "KB-4330" in kb_ids
 
-    def test_dicom_query_returns_ticket_tkt0891(self, retriever: Retriever):
-        """A query about DICOM failures should surface the matching past ticket."""
-        results = retriever.retrieve(
-            "DICOM association failing after load balancer upgrade",
-            ["past_tickets"],
-            top_k=3,
-        )
-        ticket_ids = [r["metadata"].get("ticket_id") for r in results]
-        assert "TKT-2024-0891" in ticket_ids
-
     def test_multi_collection_returns_both_sources(self, retriever: Retriever):
-        """Querying kb_articles + past_tickets should return chunks from both."""
+        """Querying kb_articles + product_docs should return chunks from both."""
         results = retriever.retrieve(
-            "TLS renegotiation DICOM association failure",
-            ["kb_articles", "past_tickets"],
+            "DICOM TLS renegotiation configuration",
+            ["kb_articles", "product_docs"],
             top_k=6,
         )
         collections_seen = {r["source_collection"] for r in results}
         assert "kb_articles" in collections_seen
-        assert "past_tickets" in collections_seen
+        assert "product_docs" in collections_seen
 
     def test_product_doc_query_returns_component_config(self, retriever: Retriever):
         """A query about DICOM config settings should hit product_docs."""
@@ -218,19 +208,6 @@ class TestRetrievalEdgeCases:
 
 
 class TestChunkingUtils:
-    def test_split_by_h2_extracts_sections(self):
-        text = "# Title\n\nPreamble\n\n## Symptom\n\nSome symptom\n\n## Resolution\n\nSome fix"
-        sections = _split_by_h2(text)
-        assert len(sections) == 2
-        assert sections[0] == ("Symptom", "Some symptom")
-        assert sections[1] == ("Resolution", "Some fix")
-
-    def test_split_by_h2_skips_empty_sections(self):
-        text = "# Title\n\n## Empty\n\n## HasContent\n\nContent here"
-        sections = _split_by_h2(text)
-        assert len(sections) == 1
-        assert sections[0][0] == "HasContent"
-
     def test_extract_finds_pattern(self):
         text = "**Affected Version:** 4.2\nother content"
         assert _extract(text, r"\*\*Affected Version:\*\* (.+)") == "4.2"

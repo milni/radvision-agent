@@ -27,24 +27,24 @@ troubleshooting, configuration, and product questions about a radiology 2D/3D vi
 ### RAG Subgraph (separate, does not count toward 5 nodes):
 - Query Rewriter → Index Selector (conditional: which collections) → Multi-Index Retrieve → Cross-Index Reranker → Relevance Gate (conditional: pass or retry rewrite, max 1)
 - Three vector store collections, each with a different chunking strategy:
-  - **KB articles** (Knowledge Base): official, curated troubleshooting documents written after a problem is fully understood. Each article covers one known issue with Symptom / Root Cause / Workaround / Resolution. **Chunked by H2 section** — one chunk per section (Symptom, Root Cause, Workaround, Resolution, etc.). Each chunk includes the article title and metadata (Article ID, Affected Version, Component, Fixed In) repeated as a preamble, followed by the H2 section name and content. Estimated size: ~30 tokens (preamble) + ~150–280 tokens (content) — within the 512-token limit.
-  - **Product docs**: component reference documentation with configuration settings. **Chunked by H3 subsection** — one chunk per parameter or scenario. Each chunk includes the component name, the full Overview section (for context), the H2 section name, the H3 subsection name, and the H3 content. The Overview repeats in every chunk so each is self-contained. Estimated size: ~250–350 tokens, within the 512-token embedding limit.
-  - **Release notes**: per-version changelogs listing new features and known issues. **Chunked by H3 subsection** — one chunk per feature or known issue entry. Each chunk includes the document title, Release Date/Status metadata, the H2 section name, and the H3 subsection content. Mirrors the product_docs chunk structure.
+  - **KB articles** (Knowledge Base): official, curated troubleshooting documents. Each article covers one known issue with Symptom / Root Cause / Workaround / Resolution. **Chunked by H2 section** — one chunk per section. Each chunk includes the article title and metadata (Article ID, Affected Version, Component, Fixed In) as a preamble. 6 articles × ~5 sections = ~33 chunks. The synthesizer fetches Workaround/Resolution sections directly by metadata filter (not embedding search) to avoid duplication.
+  - **Product docs**: component reference documentation with configuration settings. **Chunked by H3 subsection** — one chunk per parameter or scenario. Each chunk includes the component name + full Overview section as a preamble. 4 docs = ~38 chunks.
+  - **Release notes**: per-version changelogs. **Chunked by H3 subsection** — one chunk per feature or known-issue entry. 4 versions = ~27 chunks.
 
 ### Tools (2, non-retrieval):
 1. **Log Pattern Analyzer** — Regex/rule-based matching of error messages against known error signatures.
    Input: error string or log snippet. Output: matched KB id, confidence, pattern name, description.
    Implementation: JSON database of ~30 error patterns with regex matchers.
 2. **Compatibility Checker** — Structured lookup: version × OS × GPU × feature → support status.
-   Input: query dict. Output: status (supported/limited/unsupported), reason, recommendation.
-   Implementation: JSON/SQLite matrix, ~100 entries.
+   Input: query dict. Output: status (supported/limited/unsupported/experimental), reason, recommendation.
+   Implementation: JSON matrix. GPU name normalization via `_resolve_gpu()` (e.g., "T4" → "NVIDIA T4").
 
 ## Tech Stack
 - Python 3.11+
 - LangGraph (langgraph) for workflow orchestration
 - LangChain for LLM integration and document processing
 - ChromaDB for vector storage
-- Ollama (gemma3:4b for triage/synthesis, gemma3:1b for grounding/escalation — all configurable via env vars)
+- Ollama (gemma3:4b for all LLM nodes — configurable via env vars in src/config.py)
 - Sentence-transformers (all-MiniLM-L6-v2) for embeddings
 - Streamlit for UI
 - Docker + docker-compose for containerization

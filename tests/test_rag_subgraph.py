@@ -82,11 +82,10 @@ class TestQueryRewriter:
 
 
 class TestIndexSelector:
-    def test_troubleshooting_query_selects_kb_and_tickets(self):
+    def test_troubleshooting_query_selects_kb_articles(self):
         state = {"query": "DICOM error timeout", "rewritten_query": "DICOM error timeout", "rewrite_count": 0}
         result = select_indexes(state)
         assert "kb_articles" in result["collections"]
-        assert "past_tickets" in result["collections"]
 
     def test_version_query_selects_release_notes(self):
         state = {"query": "what's new in v4.2", "rewritten_query": "what's new in v4.2", "rewrite_count": 0}
@@ -101,13 +100,16 @@ class TestIndexSelector:
     def test_unclear_query_selects_all_collections(self):
         state = {"query": "tell me something", "rewritten_query": "tell me something", "rewrite_count": 0}
         result = select_indexes(state)
-        assert len(result["collections"]) == 4
+        # 3 collections: kb_articles, product_docs, release_notes (no past_tickets)
+        assert len(result["collections"]) == 3
+        assert set(result["collections"]) == {"kb_articles", "product_docs", "release_notes"}
 
     def test_retry_always_selects_all_collections(self):
-        # Even a version query should widen on retry
+        # Even a version query should widen to all 3 collections on retry
         state = {"query": "v4.2 release", "rewritten_query": "v4.2 release", "rewrite_count": 1}
         result = select_indexes(state)
-        assert len(result["collections"]) == 4
+        assert len(result["collections"]) == 3
+        assert set(result["collections"]) == {"kb_articles", "product_docs", "release_notes"}
 
     def test_returns_collections_key(self):
         result = select_indexes({"query": "anything", "rewritten_query": "anything", "rewrite_count": 0})

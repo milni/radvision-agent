@@ -12,12 +12,19 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    # Pull the model on first start
+    # Serve the model, then pull gemma3:4b (no-op if already cached in the volume)
     entrypoint: >
       sh -c "ollama serve &
              sleep 5 &&
-             ollama pull mistral:7b-instruct-v0.3-q4_K_M &&
+             ollama pull gemma3:4b &&
              wait"
+    healthcheck:
+      # Passes once gemma3:4b is fully downloaded and listed
+      test: ["CMD", "ollama", "show", "gemma3:4b"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s  # Allow time for the initial model pull (~2–5 min on first run)
 
   app:
     build: .
@@ -25,11 +32,13 @@ services:
       - "8501:8501"
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
-      - LLM_MODEL=mistral:7b-instruct-v0.3-q4_K_M
+      - LLM_MODEL=gemma3:4b
+      - GROUNDING_LLM_MODEL=gemma3:4b
+      - ESCALATION_LLM_MODEL=gemma3:4b
       - EMBEDDING_MODEL=all-MiniLM-L6-v2
-      - USE_DUMMY_LLM=false
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
     volumes:
       - vectorstore_data:/app/data/vectorstore
 

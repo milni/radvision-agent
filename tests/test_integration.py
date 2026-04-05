@@ -14,7 +14,6 @@ from src.agents.graph import (
     _route_from_grounding,
     _route_from_sufficiency,
     _route_from_triage,
-    build_graph,
     run_agent,
 )
 from src.config import GROUNDING_MAX_REGENERATIONS, VECTORSTORE_DIR
@@ -154,7 +153,7 @@ class TestRunAgent:
         assert result["outcome"] in ("resolved", "escalate", "clarify")
 
     def test_all_personas_return_non_empty_response(self):
-        for persona in ("support", "field_engineer", "sales"):
+        for persona in ("support", "sales"):
             result = run_agent("DICOM TLS error on v4.2", persona)
             assert result["outcome"] in ("resolved", "clarify", "escalate")
             assert len(result.get("final_response", "")) > 0

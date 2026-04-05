@@ -8,7 +8,6 @@ Structured matrix lookups — NOT vector search.
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from pydantic import BaseModel
