@@ -56,20 +56,23 @@ class RAGState(TypedDict):
 # Rules are evaluated in order; first match wins.
 # Each entry: (regex_pattern, collections_to_query)
 _SELECTOR_RULES: list[tuple[str, list[str]]] = [
-    # Version / changelog signals
+    # Version / changelog signals — check first so "what changed in v4.2" doesn't fall through
     (
         r"\bversion\b|\brelease\b|\bchangelog\b|\bwhat.?s new\b|\bv\d+\.\d+\b",
         ["release_notes"],
     ),
-    # Configuration / setup signals
+    # Configuration / setup / how-to signals — check before troubleshooting so
+    # "how do I configure DICOM send" routes to product_docs, not kb_articles
     (
-        r"\bconfigur\b|\bsetting\b|\bparam(eter)?\b|\bhow.?to\b|\bsetup\b|\binstall\b",
+        r"\bconfigur\b|\bsetting\b|\bparam(eter)?\b|\bhow.?to\b|\bsetup\b|\binstall\b"
+        r"|\bhow do i\b|\bstep.?by.?step\b|\bwalk me through\b",
         ["product_docs"],
     ),
-    # Troubleshooting / error signals
+    # Troubleshooting / error signals — DICOM/FHIR removed; they are component names,
+    # not error indicators, and should not override the configuration rule above
     (
         r"\berror\b|\bfail\b|\bcrash\b|\btimeout\b|\breject\b|\bartifact\b"
-        r"|\blag\b|\bslow\b|\b503\b|\bTLS\b|\bDICOM\b|\bFHIR\b",
+        r"|\blag\b|\bslow\b|\b503\b|\bTLS\b",
         ["kb_articles"],
     ),
 ]

@@ -38,6 +38,7 @@ _SYNTH_PROMPT = """\
 
 Using ONLY the evidence below, write a concise support response.
 Do not invent facts not present in the evidence.
+Do not start with preambles like "Okay", "Sure", "Here's", "Subject:", or "Thank you for contacting". Begin directly with the content.
 
 Evidence:
 {evidence}
@@ -150,7 +151,16 @@ def _best_evidence_text(tool_results: list[dict], rag_results: list[dict]) -> st
         return "\n\n".join(lines)[:_MAX_EVIDENCE_CHARS]
     relevant_rag = [r for r in rag_results if r.get("score", 0) >= RAG_RELEVANCE_THRESHOLD * 1.5]
     if relevant_rag:
-        return relevant_rag[0]["text"][:_MAX_EVIDENCE_CHARS]
+        parts: list[str] = []
+        budget = _MAX_EVIDENCE_CHARS
+        for r in relevant_rag:
+            chunk = r["text"]
+            if len(chunk) > budget:
+                parts.append(chunk[:budget])
+                break
+            parts.append(chunk)
+            budget -= len(chunk)
+        return "\n\n---\n\n".join(parts)
     return ""
 
 

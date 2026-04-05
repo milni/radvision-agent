@@ -17,9 +17,31 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import mlflow
 import yaml
+from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 from src.agents.graph import _get_graph
 from src.config import LLM_MODEL, RAG_RELEVANCE_THRESHOLD, RAG_TOP_K
+
+_embed_fn = DefaultEmbeddingFunction()
+
+
+def _semantic_similarity(expected: str, actual: str) -> float:
+    """Cosine similarity between expected and actual answer embeddings (0.0–1.0).
+
+    Uses ChromaDB's DefaultEmbeddingFunction (all-MiniLM-L6-v2) which is
+    already installed and avoids the NumPy/PyTorch version conflict.
+    """
+    if not expected.strip() or not actual.strip():
+        return 0.0
+    embs = _embed_fn([expected, actual])
+    a = [float(x) for x in embs[0]]
+    b = [float(x) for x in embs[1]]
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return round(float(dot / (norm_a * norm_b)), 3)
 from src.tracking import (
     EXPERIMENT_EVALUATION,
     log_artifact_safe,
@@ -86,6 +108,10 @@ def _run_question(graph, q: dict) -> dict:
     actual_outcome   = state.get("outcome", "")
     outcome_correct  = int(actual_outcome == expected_outcome) if expected_outcome else 1
 
+    expected_answer = q.get("expected_answer", "")
+    actual_answer   = state.get("final_response", "")
+    sem_sim = round(_semantic_similarity(expected_answer, actual_answer), 3)
+
     return {
         "id":                q["id"],
         "query":             q["query"][:80],
@@ -99,6 +125,7 @@ def _run_question(graph, q: dict) -> dict:
         "ran_compat_checker": ran_compat,
         "tool_correct":      tool_correct,
         "answer_quality":    answer_quality,
+        "semantic_similarity": sem_sim,
         "expected_outcome":  expected_outcome,
         "actual_outcome":    actual_outcome,
         "outcome_correct":   outcome_correct,
@@ -106,8 +133,8 @@ def _run_question(graph, q: dict) -> dict:
         "grounding_pass":    state.get("grounding_pass", False),
         "node_trace":        " → ".join(node_trace),
         "latency_s":         latency,
-        "expected_answer":   q.get("expected_answer", ""),
-        "actual_answer":     state.get("final_response", ""),
+        "expected_answer":   expected_answer,
+        "actual_answer":     actual_answer,
     }
 
 
@@ -117,9 +144,9 @@ def _run_question(graph, q: dict) -> dict:
 
 
 def _print_table(results: list[dict]) -> None:
-    header = f"{'ID':<10} {'R✓':>3} {'T✓':>3} {'Qual':>6} {'O✓':>3} {'GScore':>7} {'Lat':>6}  Trace"
+    header = f"{'ID':<10} {'R✓':>3} {'T✓':>3} {'Qual':>6} {'Sem':>6} {'O✓':>3} {'GScore':>7} {'Lat':>6}  Trace"
     print(header)
-    print("─" * 110)
+    print("─" * 120)
     for r in results:
         route_icon   = "✓" if r["route_correct"]   else "✗"
         tool_icon    = "✓" if r["tool_correct"]    else "✗"
@@ -129,22 +156,23 @@ def _print_table(results: list[dict]) -> None:
                                       .replace("run_rag", "rag")
         print(
             f"{r['id']:<10} {route_icon:>3} {tool_icon:>3} "
-            f"{r['answer_quality']:>6.3f} {outcome_icon:>3} "
+            f"{r['answer_quality']:>6.3f} {r['semantic_similarity']:>6.3f} {outcome_icon:>3} "
             f"{r['grounding_score']:>7.3f} {r['latency_s']:>5.2f}s  "
-            f"{trace_short[:60]}"
+            f"{trace_short[:55]}"
         )
 
 
 def _aggregate(results: list[dict]) -> dict:
     n = len(results)
     return {
-        "num_questions":    n,
-        "route_accuracy":   round(sum(r["route_correct"]   for r in results) / n, 3),
-        "tool_accuracy":    round(sum(r["tool_correct"]    for r in results) / n, 3),
-        "answer_quality_mean": round(sum(r["answer_quality"] for r in results) / n, 3),
-        "outcome_accuracy": round(sum(r["outcome_correct"] for r in results) / n, 3),
-        "avg_latency_s":    round(sum(r["latency_s"]       for r in results) / n, 3),
-        "total_latency_s":  round(sum(r["latency_s"]       for r in results), 3),
+        "num_questions":        n,
+        "route_accuracy":       round(sum(r["route_correct"]        for r in results) / n, 3),
+        "tool_accuracy":        round(sum(r["tool_correct"]         for r in results) / n, 3),
+        "answer_quality_mean":  round(sum(r["answer_quality"]       for r in results) / n, 3),
+        "semantic_sim_mean":    round(sum(r["semantic_similarity"]   for r in results) / n, 3),
+        "outcome_accuracy":     round(sum(r["outcome_correct"]       for r in results) / n, 3),
+        "avg_latency_s":        round(sum(r["latency_s"]            for r in results) / n, 3),
+        "total_latency_s":      round(sum(r["latency_s"]            for r in results), 3),
     }
 
 
@@ -176,12 +204,13 @@ def main() -> None:
 
             # Per-question metrics with step index
             mlflow.log_metrics({
-                "route_correct":   r["route_correct"],
-                "tool_correct":    r["tool_correct"],
-                "answer_quality":  r["answer_quality"],
-                "outcome_correct": r["outcome_correct"],
-                "grounding_score": r["grounding_score"],
-                "latency_s":       r["latency_s"],
+                "route_correct":      r["route_correct"],
+                "tool_correct":       r["tool_correct"],
+                "answer_quality":     r["answer_quality"],
+                "semantic_similarity": r["semantic_similarity"],
+                "outcome_correct":    r["outcome_correct"],
+                "grounding_score":    r["grounding_score"],
+                "latency_s":          r["latency_s"],
             }, step=i)
 
         agg = _aggregate(results)
@@ -189,6 +218,7 @@ def main() -> None:
             "route_accuracy":       agg["route_accuracy"],
             "tool_accuracy":        agg["tool_accuracy"],
             "answer_quality_mean":  agg["answer_quality_mean"],
+            "semantic_sim_mean":    agg["semantic_sim_mean"],
             "outcome_accuracy":     agg["outcome_accuracy"],
             "avg_latency_s":        agg["avg_latency_s"],
         })
@@ -197,6 +227,7 @@ def main() -> None:
         RESULTS_PATH.write_text(json.dumps(
             {"run_id": run.info.run_id, "aggregate": agg, "questions": results},
             indent=2,
+            default=lambda o: float(o) if hasattr(o, "__float__") else str(o),
         ))
         log_artifact_safe(str(RESULTS_PATH))
 
@@ -207,6 +238,7 @@ def main() -> None:
         f"AGGREGATE  route={agg['route_accuracy']:.0%}  "
         f"tool={agg['tool_accuracy']:.0%}  "
         f"quality={agg['answer_quality_mean']:.3f}  "
+        f"sem_sim={agg['semantic_sim_mean']:.3f}  "
         f"outcome={agg['outcome_accuracy']:.0%}  "
         f"avg_lat={agg['avg_latency_s']:.2f}s"
     )

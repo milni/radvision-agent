@@ -29,7 +29,7 @@ _SAFETY_RE = re.compile(
     re.IGNORECASE,
 )
 
-_ESCALATION_THRESHOLD = 0.3
+_ESCALATION_THRESHOLD = 0.1
 
 _ESCALATION_PROMPT = """\
 You are the escalation gate of a radiology software support agent.
