@@ -1,6 +1,6 @@
-# RadVision Pro — Agentic RAG Support Agent
+# RadVision Pro (fully fictional) — Agentic RAG Support Agent
 
-An agentic RAG chatbot prototype built with LangGraph that assists Sales Engineers and Support Engineers working with a medical imaging visualization platform.
+An agentic RAG chatbot prototype built with LangGraph that assists Sales Engineers and Support Engineers working with a fully fictional medical imaging visualization platform.
 
 ## Problem Statement
 
