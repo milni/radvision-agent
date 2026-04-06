@@ -137,15 +137,29 @@ All documents are generated from a single product specification seed (`data/seed
 The load test (`evaluation/load_test.py`) sends N queries concurrently using a thread pool and reports p50/p95/p99 latency, queries-per-second throughput, and error rate. Results are logged to MLflow under the `radvision/evaluation` experiment.
 
 ```bash
-python evaluation/load_test.py --queries 50 --concurrency 5
+python evaluation/load_test.py --queries 10 --concurrency 2
 ```
 
-With local Ollama (gemma3:4b, single GPU), concurrency is limited by the model serving capacity — Ollama processes requests serially. Meaningful concurrency only applies when using a hosted API.
+**Results (10 queries, concurrency=2, gemma3:4b on local Ollama):**
 
-**Bottleneck analysis:** At the prototype scale, the bottleneck is LLM inference. ChromaDB embedding lookup is fast (< 100 ms per query). Optimization paths for production:
-1. Replace local Ollama with a hosted API (Claude, OpenAI) to unlock true concurrency.
-2. Cache the compiled LangGraph and ChromaDB clients across requests (already done — singletons in `graph.py`).
-3. Reduce the number of LLM calls: the current pipeline makes 3–4 LLM calls per query (triage, synthesis, grounding, escalation). Grounding could be replaced with a lightweight heuristic for latency-sensitive deployments.
+| Metric | Value |
+|---|---|
+| Queries completed | 10 / 10 (0 errors) |
+| Latency p50 | ~466 s |
+| Latency p95 | ~623 s |
+| Latency p99 | ~653 s |
+| Latency mean | ~459 s |
+| Throughput | 0.004 q/s |
+| Error rate | 0% |
+
+**Bottleneck:** LLM inference via local Ollama. Each query makes **3–4 serial LLM calls** (triage → synthesis → grounding → escalation), each taking ~2 min with gemma3:4b locally. Ollama processes requests serially regardless of thread concurrency, so p50 ≈ 4 calls × 2 min = ~8 min.
+
+ChromaDB embedding lookup is fast (< 200 ms/query) and is not a bottleneck at this scale.
+
+**Optimization paths for production:**
+1. **Replace local Ollama with a hosted API** — per-call latency drops from ~2 min to 1–5 sec, enabling real concurrency. Total query latency would fall to ~10–30 s.
+2. **Reduce LLM call count** — merge triage + escalation into a single call, or replace grounding with a lightweight heuristic (regex KB-ref check). This cuts calls from 4 to 2–3.
+3. **Client singletons** — LangGraph graph, ChromaDB client, and LLM instances are already cached as module-level singletons in `graph.py`, eliminating per-request initialization overhead.
 
 ## Setup & Running
 

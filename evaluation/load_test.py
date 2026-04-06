@@ -150,13 +150,20 @@ def main(num_queries: int = 50, concurrency: int = 10) -> None:
     print(f"{'─' * 55}")
     print(f"\nMLflow run: {run.info.run_id}")
 
-    # Bottleneck hint (dummy LLM → embedding is the likely bottleneck)
-    if p95 > 2.0:
-        print("\nBottleneck hint: p95 > 2s — likely ChromaDB embedding lookup.")
+    # Bottleneck analysis
+    llm_threshold = 10.0   # > 10s per query → LLM inference dominates
+    emb_threshold = 2.0    # 2–10s → embedding/ChromaDB likely the bottleneck
+    if p50 > llm_threshold:
+        print("\nBottleneck: LLM inference (local Ollama, serial execution).")
+        print(f"  Each query makes 3–4 serial LLM calls → p50 ≈ {p50:.0f}s.")
+        print("  Optimization 1: replace local Ollama with a hosted API (latency drops to ~1–5s/call).")
+        print("  Optimization 2: merge triage+escalation into one LLM call to reduce round-trips.")
+    elif p95 > emb_threshold:
+        print("\nBottleneck: ChromaDB embedding lookup (ONNX inference overhead).")
         print("  Optimization 1: increase RAG_TOP_K batch size to amortise ONNX overhead.")
         print("  Optimization 2: cache the Retriever instance (already singleton in graph.py).")
     else:
-        print("\nLatency looks healthy for a dummy-LLM configuration.")
+        print("\nLatency looks healthy.")
 
 
 if __name__ == "__main__":
